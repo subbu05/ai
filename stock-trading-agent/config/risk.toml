@@ -1,0 +1,17 @@
+# Pre-trade risk limits. Every order is checked against these before it reaches the broker.
+# Closing / reducing trades are always allowed so you can exit positions.
+
+[risk]
+max_order_notional = 25000.0     # max $ per opening order
+max_position_pct = 0.20          # max single stock position, fraction of equity
+max_etf_position_pct = 0.60      # max single ETF position, fraction of equity
+max_daily_loss_pct = 0.03        # stop opening new trades after a 3% down day
+max_open_positions = 20
+max_option_premium_pct = 0.05    # max premium per option order, fraction of equity
+max_total_option_pct = 0.15      # max total long-option exposure, fraction of equity
+min_option_dte = 7               # don't open options expiring within 7 days
+allow_short_stock = false
+allow_naked_options = false      # only covered calls and cash-secured puts may be sold
+allowed_symbols = []             # e.g. ["SPY", "QQQ", "AAPL"]; empty = everything
+blocked_symbols = []             # e.g. ["GME"]
+kill_switch_file = ".kill_switch"
