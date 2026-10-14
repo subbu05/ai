@@ -5,6 +5,10 @@
 - Python 3.11+
 - `anthropic` (only needed for the Claude agent: `ask`, `chat` and `autopilot` commands)
 
+Run these from `stock-trading-agent/` (the folder with `pyproject.toml`), not from the inner
+`trading_agent/` package folder. Or skip them and use `./start.sh` / `start.bat`, which set
+everything up on first run.
+
 ```bash
 cd stock-trading-agent
 python -m venv .venv && source .venv/bin/activate

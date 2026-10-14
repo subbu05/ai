@@ -21,21 +21,38 @@ skill ──► RiskManager.check ──► human approval ──► broker ─�
 
 ## Quick start (no API keys needed)
 
-```bash
-cd stock-trading-agent
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
-python -m trading_agent secrets init   # local credentials file (only needed for real brokers)
+Everything below runs from the **`stock-trading-agent/` folder**, the one that contains
+`pyproject.toml` and `start.sh`, **not** the inner `trading_agent/` folder. Running pip inside
+`trading_agent/` gives *"does not appear to be a Python project"*.
 
-python -m trading_agent skills                       # list every skill
+**Easiest: the launcher** (creates `.venv` and installs on first run, works from any folder):
+
+```bash
+./start.sh                 # macOS / Linux: opens the web UI (paper trading)
+start.bat                  # Windows: double-click, or run in a terminal
+./start.sh monitor         # any other command: ./start.sh <command> ...
+```
+
+**Manual setup:**
+
+```bash
+cd stock-trading-agent                   # the folder with pyproject.toml
+python3 -m venv .venv
+source .venv/bin/activate                # Windows: .venv\Scripts\activate
+pip install -e ".[dev]"
+
+python -m trading_agent ui               # web UI
+python -m trading_agent skills           # list every skill
 python -m trading_agent account
 python -m trading_agent quote SPY AAPL
 python -m trading_agent run buy_etf symbol=VTI notional=10000 reason="core holding"
-python -m trading_agent run get_option_chain underlying=NVDA right=call min_delta=0.2 max_delta=0.3
 python -m trading_agent positions
-python -m trading_agent journal
-pytest                                               # 97 offline tests
+pytest                                   # 97 offline tests
 ```
+
+Requires **Python 3.11+**. Paper trading uses a built-in simulator. To connect a real broker,
+store keys with `python -m trading_agent secrets init` / `secrets set ...`
+(see [docs/ACCOUNTS.md](docs/ACCOUNTS.md)).
 
 ## Using the Claude agent
 
