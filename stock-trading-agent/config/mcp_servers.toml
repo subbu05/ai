@@ -1,0 +1,73 @@
+# Broker MCP servers the agent can connect to.
+#
+# Turn servers on with `enabled = true`, `MCP_SERVERS=alpaca,webull` in .env, or
+# `--mcp alpaca,webull` on the command line. Values support ${VAR} and ${VAR:-default}.
+# A server whose required variables are unset is skipped, never started with blank keys.
+#
+# Every tool that can change the account (orders, cancels, watchlists, ...) goes through
+# the MCP guard (kill switch, symbol lists, order-value cap, journal) and needs your approval.
+# Servers that trade real money (`live`) are only connected with --i-understand-live-trading,
+# unless they are `read_only`.
+#
+# Optional per server:
+#   protocol    = "legacy"    # skip the 2026 protocol probe for servers that only speak the older handshake
+#   read_only   = true        # hide every account-changing tool from the agent
+#   trade_tools = ["regex"]   # force tools to be treated as trades
+#   read_tools  = ["regex"]   # force tools to be treated as read-only
+
+# --- Alpaca: official server (github.com/alpacahq/alpaca-mcp-server) -----------------------
+# Paper trading unless ALPACA_PAPER_TRADE=false. Needs `uv` installed (for uvx).
+[servers.alpaca]
+description = "Alpaca stocks, ETFs, options (official MCP server)"
+enabled = false
+transport = "stdio"
+command = "uvx"
+args = ["alpaca-mcp-server"]
+protocol = "legacy"
+env = { ALPACA_API_KEY = "${ALPACA_API_KEY_ID}", ALPACA_SECRET_KEY = "${ALPACA_API_SECRET_KEY}", ALPACA_PAPER_TRADE = "${ALPACA_PAPER_TRADE:-true}", ALPACA_TOOLSETS = "${ALPACA_TOOLSETS:-}" }
+live_if_env = { ALPACA_PAPER_TRADE = "false" }
+
+# --- Webull: official server (pypi.org/project/webull-openapi-mcp) ---------------------------
+# WEBULL_ENVIRONMENT=uat is the sandbox; prod is live. Run `uvx webull-openapi-mcp auth` once
+# first if your account uses 2FA (you approve it in the Webull app).
+# The Webull server enforces its own limits as well (max order value/quantity, symbol whitelist).
+# Keep WEBULL_MAX_ORDER_NOTIONAL_USD at or below max_order_notional in risk.toml.
+# Empty optional variables are not passed, so the server's defaults apply.
+[servers.webull]
+description = "Webull stocks, ETFs, options (official MCP server)"
+enabled = false
+transport = "stdio"
+command = "uvx"
+args = ["webull-openapi-mcp", "serve"]
+protocol = "legacy"
+env = { WEBULL_APP_KEY = "${WEBULL_APP_KEY}", WEBULL_APP_SECRET = "${WEBULL_APP_SECRET}", WEBULL_REGION_ID = "${WEBULL_REGION_ID:-us}", WEBULL_ENVIRONMENT = "${WEBULL_ENVIRONMENT:-uat}", WEBULL_MAX_ORDER_NOTIONAL_USD = "${WEBULL_MAX_ORDER_NOTIONAL_USD:-10000}", WEBULL_MAX_ORDER_QUANTITY = "${WEBULL_MAX_ORDER_QUANTITY:-1000}", WEBULL_SYMBOL_WHITELIST = "${WEBULL_SYMBOL_WHITELIST:-}", WEBULL_TOOLSETS = "${WEBULL_TOOLSETS:-}" }
+live_if_env = { WEBULL_ENVIRONMENT = "prod" }
+
+# --- Robinhood: official remote server (Agentic Trading) -------------------------------------
+# Real money: trades only in your separate Agentic account, and each order is sent to the
+# Robinhood app for you to approve. The server uses OAuth sign-in. Claude Code and Claude
+# Desktop handle that for you (see docs/MCP.md). For this Python agent, supply an access
+# token in ROBINHOOD_MCP_TOKEN.
+[servers.robinhood]
+description = "Robinhood Agentic Trading (official remote MCP server)"
+enabled = false
+transport = "http"
+url = "https://agent.robinhood.com/mcp/trading"
+headers = { Authorization = "Bearer ${ROBINHOOD_MCP_TOKEN}" }
+live = true
+
+# --- Fidelity: NO official API or MCP server ------------------------------------------------
+# Fidelity doesn't offer a public retail trading API. The community MCP servers that exist
+# work by automating a logged-in browser session. They're unofficial, may break or conflict
+# with Fidelity's terms, and hold your session credentials. This entry is a placeholder:
+# point FIDELITY_MCP_COMMAND/ARGS at a server you have reviewed yourself. It's read-only by
+# default; set read_only = false at your own risk.
+[servers.fidelity]
+description = "Fidelity via a user-supplied, UNOFFICIAL MCP server (read-only by default)"
+enabled = false
+unofficial = true
+transport = "stdio"
+command = "${FIDELITY_MCP_COMMAND}"
+args = ["${FIDELITY_MCP_ARGS:-}"]
+live = true
+read_only = true

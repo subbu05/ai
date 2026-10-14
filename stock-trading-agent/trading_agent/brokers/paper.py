@@ -19,6 +19,7 @@ from typing import Callable
 from ..models import (
     Account,
     AssetClass,
+    Fill,
     OptionContract,
     OptionRight,
     Order,
@@ -105,7 +106,9 @@ class PaperBroker(Broker):
         self.options_level = options_level
         self.positions: dict[str, Position] = {}
         self.orders: dict[str, Order] = {}
+        self.fills: list[Fill] = []
         self.day_start_equity = starting_cash
+        self.clock = lambda: datetime.now(timezone.utc)   # override to simulate time
         self._day = date.today().isoformat()
         self._load()
 
@@ -176,7 +179,7 @@ class PaperBroker(Broker):
     def submit_order(self, order: Order) -> Order:
         order.symbol = order.symbol.upper()
         order.id = uuid.uuid4().hex
-        order.submitted_at = datetime.now(timezone.utc)
+        order.submitted_at = self.clock()
         quote = self.get_quote(order.symbol)
         fill_price = quote.ask if order.side == Side.BUY else quote.bid
 
@@ -232,6 +235,46 @@ class PaperBroker(Broker):
         order.status = OrderStatus.FILLED
         order.filled_qty = order.qty
         order.filled_avg_price = round(price, 4)
+        self.fills.append(Fill(uuid.uuid4().hex, order.symbol, order.side, order.qty, round(price, 4),
+                               order.asset_class, self.clock(), order.id or "", commission))
+
+    def process_open_orders(self) -> list[Order]:
+        """Fill resting limit/stop orders that current prices make executable."""
+        filled = []
+        for order in list(self.orders.values()):
+            if order.status != OrderStatus.NEW:
+                continue
+            q = self.get_quote(order.symbol)
+            buy = order.side == Side.BUY
+            touch = q.mid if order.asset_class == AssetClass.OPTION else (q.ask if buy else q.bid)
+            price = None
+            if order.order_type == OrderType.LIMIT:
+                if (buy and touch <= order.limit_price) or (not buy and touch >= order.limit_price):
+                    price = min(touch, order.limit_price) if buy else max(touch, order.limit_price)
+            elif order.order_type in (OrderType.STOP, OrderType.STOP_LIMIT):
+                triggered = (q.ask >= order.stop_price) if buy else (q.bid <= order.stop_price)
+                if triggered:
+                    if order.order_type == OrderType.STOP:
+                        price = q.ask if buy else q.bid
+                    else:
+                        order.order_type = OrderType.LIMIT  # becomes a resting limit
+                        continue
+            if price is not None:
+                self._fill(order, price)
+                filled.append(order)
+        if filled:
+            self._save()
+        return filled
+
+    def tick(self, symbols: list[str] | None = None, minutes: int = 5) -> list[Order]:
+        """Advance simulated prices (paper only), then process resting orders."""
+        for sym in symbols or [p.symbol for p in self.positions.values()
+                               if p.asset_class != AssetClass.OPTION]:
+            self.market.tick(sym, minutes)
+        return self.process_open_orders()
+
+    def get_fills(self, since: datetime | None = None) -> list[Fill]:
+        return [f for f in self.fills if since is None or f.timestamp > since]
 
     def cancel_order(self, order_id: str) -> None:
         order = self.orders.get(order_id)
@@ -271,6 +314,7 @@ class PaperBroker(Broker):
                 for p in self.positions.values()
             ],
             "open_orders": [o.to_dict() for o in self.orders.values() if o.status == OrderStatus.NEW],
+            "fills": [f.to_dict() for f in self.fills],
         }
         self.state_file.write_text(json.dumps(state, indent=2))
 
@@ -282,6 +326,10 @@ class PaperBroker(Broker):
         self._day = state.get("day", self._day)
         self.day_start_equity = state.get("day_start_equity", self.cash)
         self.market._prices.update(state.get("prices", {}))
+        for o in state.get("open_orders", []):
+            order = Order.from_dict(o)
+            self.orders[order.id] = order
+        self.fills = [Fill.from_dict(f) for f in state.get("fills", [])]
         for p in state.get("positions", []):
             self.positions[p["symbol"]] = Position(
                 p["symbol"], p["qty"], p["avg_entry_price"], AssetClass(p["asset_class"]))

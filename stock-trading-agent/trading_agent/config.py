@@ -59,8 +59,18 @@ class Settings:
     def is_live(self) -> bool:
         return self.trading_mode == "alpaca-live"
 
+    @property
+    def data_dir(self) -> Path:
+        """Folder for local trading data (journal, fills, price log); follows JOURNAL_FILE."""
+        p = Path(self.journal_file)
+        return (p if p.is_absolute() else PROJECT_ROOT / p).parent
+
     @classmethod
     def from_env(cls) -> "Settings":
+        from .credentials import apply_secrets
+
+        # Precedence: real environment > local accounts file > .env
+        apply_secrets()
         _load_dotenv(PROJECT_ROOT / ".env")
         mode = os.getenv("TRADING_MODE", "paper").lower()
         if mode not in ("paper", "alpaca-paper", "alpaca-live"):

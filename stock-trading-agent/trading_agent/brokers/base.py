@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from datetime import date
+from datetime import date, datetime
 
-from ..models import Account, OptionContract, Order, Position, Quote
+from ..models import Account, Fill, OptionContract, Order, Position, Quote
 
 
 class BrokerError(RuntimeError):
@@ -41,6 +41,10 @@ class Broker(ABC):
 
     @abstractmethod
     def list_orders(self, status: str = "open") -> list[Order]: ...
+
+    def get_fills(self, since: datetime | None = None) -> list[Fill]:
+        """Executions, oldest first. Used for realized P&L."""
+        return []
 
     def get_history(self, symbol: str, days: int = 60) -> list[float]:
         """Daily closes, oldest first. Optional; used by strategy skills."""

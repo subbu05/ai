@@ -16,6 +16,7 @@ from datetime import date, datetime, timedelta, timezone
 from ..models import (
     Account,
     AssetClass,
+    Fill,
     OptionContract,
     Order,
     OrderStatus,
@@ -156,6 +157,29 @@ class AlpacaBroker(Broker):
         data = self._data(f"/v2/stocks/{symbol.upper()}/bars",
                           params={"timeframe": "1Day", "start": start, "limit": 10000, "adjustment": "all"})
         return [float(b["c"]) for b in (data.get("bars") or [])][-days:]
+
+    def is_market_open(self) -> bool:
+        return bool(self._trading("GET", "/v2/clock").get("is_open"))
+
+    def get_fills(self, since: datetime | None = None) -> list[Fill]:
+        """Executions from the account activities feed (FILL), oldest first."""
+        params: dict = {"direction": "asc", "page_size": 100}
+        if since:
+            params["after"] = since.isoformat()
+        fills: list[Fill] = []
+        while True:
+            page = self._trading("GET", "/v2/account/activities/FILL", params=params) or []
+            for a in page:
+                sym = a["symbol"]
+                asset = AssetClass.OPTION if _is_occ(sym) else (
+                    AssetClass.ETF if self._is_etf(sym) else AssetClass.STOCK)
+                side = Side.BUY if a["side"] == "buy" else Side.SELL  # sell_short -> sell
+                fills.append(Fill(a["id"], sym, side, float(a["qty"]), float(a["price"]), asset,
+                                  datetime.fromisoformat(a["transaction_time"].replace("Z", "+00:00")),
+                                  a.get("order_id", "")))
+            if len(page) < params["page_size"]:
+                return fills
+            params["page_token"] = page[-1]["id"]
 
     # ---------------------------------------------------------------- orders
     def submit_order(self, order: Order) -> Order:

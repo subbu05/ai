@@ -21,25 +21,42 @@ skill ──► RiskManager.check ──► human approval ──► broker ─�
 
 ## Quick start (no API keys needed)
 
-```bash
-cd stock-trading-agent
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
-cp .env.example .env            # defaults to TRADING_MODE=paper (local simulator)
+Everything below runs from the **`stock-trading-agent/` folder**, the one that contains
+`pyproject.toml` and `start.sh`, **not** the inner `trading_agent/` folder. Running pip inside
+`trading_agent/` gives *"does not appear to be a Python project"*.
 
-python -m trading_agent skills                       # list every skill
+**Easiest: the launcher** (creates `.venv` and installs on first run, works from any folder):
+
+```bash
+./start.sh                 # macOS / Linux: opens the web UI (paper trading)
+start.bat                  # Windows: double-click, or run in a terminal
+./start.sh monitor         # any other command: ./start.sh <command> ...
+```
+
+**Manual setup:**
+
+```bash
+cd stock-trading-agent                   # the folder with pyproject.toml
+python3 -m venv .venv
+source .venv/bin/activate                # Windows: .venv\Scripts\activate
+pip install -e ".[dev]"
+
+python -m trading_agent ui               # web UI
+python -m trading_agent skills           # list every skill
 python -m trading_agent account
 python -m trading_agent quote SPY AAPL
 python -m trading_agent run buy_etf symbol=VTI notional=10000 reason="core holding"
-python -m trading_agent run get_option_chain underlying=NVDA right=call min_delta=0.2 max_delta=0.3
 python -m trading_agent positions
-python -m trading_agent journal
-pytest                                               # 36 offline tests
+pytest                                   # 97 offline tests
 ```
+
+Requires **Python 3.11+**. Paper trading uses a built-in simulator. To connect a real broker,
+store keys with `python -m trading_agent secrets init` / `secrets set ...`
+(see [docs/ACCOUNTS.md](docs/ACCOUNTS.md)).
 
 ## Using the Claude agent
 
-Set `ANTHROPIC_API_KEY` in `.env` (or run `ant auth login`), then:
+Run `python -m trading_agent secrets set anthropic.api_key` (or `ant auth login`), then:
 
 ```bash
 python -m trading_agent ask "What's my allocation? Rebalance to 60% VTI / 30% AGG, show me the plan first."
@@ -61,6 +78,77 @@ as tools, so it can't get around the risk engine or the approval prompt.
 
 To add another broker (IBKR, Schwab, Tradier...), implement `trading_agent/brokers/base.py::Broker`.
 
+## Accounts: secure local config
+
+Credentials for every broker live in `~/.config/stock-trading-agent/accounts.toml`, outside
+the repo. The code refuses to use the file unless it's `chmod 600` and not committable to git.
+
+```bash
+python -m trading_agent secrets init
+python -m trading_agent secrets set alpaca.api_key_id     # prompts, no echo
+python -m trading_agent secrets check                     # masked view + safety checks
+python -m trading_agent secrets install-hook              # pre-commit hook that blocks secrets
+```
+
+Details: [docs/ACCOUNTS.md](docs/ACCOUNTS.md).
+
+## Web UI: watchlist, labels, filters, click-to-trade
+
+```bash
+python -m trading_agent ui      # local only: http://127.0.0.1:8765
+```
+
+- Add or remove tickers, and choose which ones the profit-protection monitor manages.
+- Give them your own labels, **group by label** and **filter** by label, held, monitored or in profit.
+- **Click a ticker to buy or sell.** You get a risk-checked preview, then confirm.
+- Turn the monitor on or off, preview a check, and cancel open orders.
+
+Details: [docs/WEB_UI.md](docs/WEB_UI.md).
+
+## Daily price tracking and profit protection
+
+```bash
+python -m trading_agent monitor            # check holdings every 5 minutes
+```
+
+If a stock or ETF that has been **in profit** falls `drop_pct` (1–10%, default 3%) from
+today's high, the monitor sells **the whole position while it's still in profit**. Worst case,
+it sells at your purchase price, never below. Configure it under `[profit_protect]` in
+`config/risk.toml`. Details: [docs/MONITORING.md](docs/MONITORING.md).
+
+## P&L charts
+
+```bash
+python -m trading_agent pnl                # realized profit / loss / net, win rate, unrealized
+python -m trading_agent report             # reports/pnl_dashboard.html
+python scripts/demo_monitor.py --days 30   # demo dashboard from 30 simulated days
+```
+
+Charts: cumulative and daily realized P&L, P&L by symbol, equity curve, and each holding's
+tracked daily price against its cost, with sells marked.
+
+## Broker MCP servers (Alpaca, Webull, Robinhood, Fidelity)
+
+The agent can also connect to broker **MCP servers** and offer their tools to Claude, behind an
+MCP guard (kill switch, symbol lists, order-value cap, approval, journal). It can also serve its
+own risk-checked skills over MCP to Claude Code and Claude Desktop.
+
+| Broker | MCP server | Default |
+|---|---|---|
+| Alpaca | official `alpaca-mcp-server` (stdio) | paper |
+| Webull | official `webull-openapi-mcp` (stdio) | sandbox (`uat`) |
+| Robinhood | official Agentic Trading (remote, OAuth) | live; orders approved in the Robinhood app |
+| Fidelity | **no official server**; placeholder for an unofficial one | read-only |
+
+```bash
+python -m trading_agent mcp servers              # configured servers and what they need
+python -m trading_agent mcp tools alpaca         # list a server's tools and how they're classified
+python -m trading_agent --mcp alpaca,webull chat
+python -m trading_agent mcp serve                # serve these skills over MCP (stdio)
+```
+
+Details, setup and limits: [docs/MCP.md](docs/MCP.md).
+
 ## Skills
 
 | Category | Skills |
@@ -71,6 +159,7 @@ To add another broker (IBKR, Schwab, Tradier...), implement `trading_agent/broke
 | ETFs | `buy_etf`, `sell_etf` |
 | Options | `buy_option`, `sell_option_to_close`, `sell_covered_call`, `sell_cash_secured_put`, `buy_option_to_close` |
 | Strategies | `rebalance_portfolio`, `momentum_screen` |
+| Tracking & P&L | `track_prices`, `get_price_tracking`, `get_pnl_summary`, `watchlist_list`, `watchlist_add`, `watchlist_remove` |
 
 Full reference: [docs/SKILLS.md](docs/SKILLS.md). Writing your own: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#adding-a-skill).
 
@@ -97,6 +186,10 @@ Full reference: [docs/SKILLS.md](docs/SKILLS.md). Writing your own: [docs/ARCHIT
 - [docs/SKILLS.md](docs/SKILLS.md): every skill and its parameters
 - [docs/RISK_MANAGEMENT.md](docs/RISK_MANAGEMENT.md): every risk rule and how to tune it
 - [docs/OPTIONS.md](docs/OPTIONS.md): supported option strategies and OCC symbols
+- [docs/ACCOUNTS.md](docs/ACCOUNTS.md): secure local credentials (never in git)
+- [docs/WEB_UI.md](docs/WEB_UI.md): web UI with watchlist, labels, filters and click-to-trade
+- [docs/MONITORING.md](docs/MONITORING.md): daily price tracking, the profit-protection rule, P&L charts
+- [docs/MCP.md](docs/MCP.md): broker MCP servers (Alpaca, Webull, Robinhood, Fidelity) and `mcp serve`
 
 ## Layout
 
@@ -104,6 +197,12 @@ Full reference: [docs/SKILLS.md](docs/SKILLS.md). Writing your own: [docs/ARCHIT
 stock-trading-agent/
 ├── trading_agent/
 │   ├── agent.py            # Claude tool-use loop
+│   ├── credentials.py      # secure local accounts file
+│   ├── monitor.py          # price tracking + profit-protection rule
+│   ├── pnl.py              # fills ledger, FIFO realized P&L, equity history
+│   ├── dashboard.py        # HTML P&L charts
+│   ├── watchlist.py        # watchlist, labels, grouping, filters
+│   ├── webui/              # local web UI (server + static page)
 │   ├── cli.py              # command line entry point
 │   ├── config.py           # env + risk.toml loading
 │   ├── models.py           # Order, Position, OptionContract, ...
@@ -112,9 +211,12 @@ stock-trading-agent/
 │   ├── indicators.py       # SMA, RSI, volatility, momentum
 │   ├── options_math.py     # Black-Scholes + Greeks
 │   ├── brokers/            # base interface, paper simulator, Alpaca adapter
+│   ├── mcp_bridge/         # MCP client hub, guard, broker tool bridge, MCP server
 │   └── skills/             # market, portfolio, equity, options, strategies
-├── config/                 # risk.toml, autopilot_task.md
+├── config/                 # risk.toml, mcp_servers.toml, accounts.example.toml, autopilot_task.md
+├── scripts/                # pre-commit secrets hook, demo_monitor.py
 ├── docs/
 ├── tests/
+├── .mcp.json               # Claude Code MCP servers
 └── .claude/skills/         # Claude Code skills
 ```

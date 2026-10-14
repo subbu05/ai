@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trading Watchlist</title>
+<link rel="stylesheet" href="/app.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Cpath d=%22M1 12 6 7l3 3 6-6%22 fill=%22none%22 stroke=%22%232a78d6%22 stroke-width=%222%22/%3E%3C/svg%3E">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <h1>Watchlist</h1>
+    <span class="badge" id="modeBadge">-</span>
+  </div>
+  <dl class="stats" id="stats"></dl>
+  <div class="topactions">
+    <button type="button" class="ghost" id="themeBtn" aria-label="Toggle light or dark theme">Theme</button>
+  </div>
+</header>
+
+<div class="banner" id="banner" hidden></div>
+
+<main>
+  <section class="panel monitor" aria-labelledby="monTitle">
+    <div class="monitor-text">
+      <h2 id="monTitle">Profit protection</h2>
+      <p class="muted" id="monDesc">-</p>
+    </div>
+    <div class="monitor-actions">
+      <label class="switch">
+        <input type="checkbox" id="monToggle">
+        <span class="track" aria-hidden="true"></span>
+        <span id="monToggleLabel">Off</span>
+      </label>
+      <button type="button" class="secondary" id="monPreview">Preview check</button>
+      <button type="button" class="secondary" id="monRun">Run check now</button>
+    </div>
+  </section>
+
+  <section class="panel" aria-label="Add a ticker">
+    <form class="addform" id="addForm" autocomplete="off">
+      <label class="field">
+        <span>Ticker</span>
+        <input id="addSymbol" name="symbol" placeholder="e.g. AAPL" maxlength="10" required>
+      </label>
+      <label class="field grow">
+        <span>Labels <small class="muted">comma separated</small></span>
+        <input id="addLabels" name="labels" placeholder="e.g. Tech, Long term" list="labelOptions">
+        <datalist id="labelOptions"></datalist>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="addMonitor" checked> Monitor
+      </label>
+      <button type="submit" class="primary">Add to watchlist</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <div class="toolbar">
+      <label class="field search">
+        <span class="sr-only">Search</span>
+        <input id="search" type="search" placeholder="Search ticker or note">
+      </label>
+      <div class="seg" role="group" aria-label="Group by">
+        <button type="button" data-group="label" class="on">Group by label</button>
+        <button type="button" data-group="none">No grouping</button>
+      </div>
+      <label class="check"><input type="checkbox" id="fHeld"> Held only</label>
+      <label class="check"><input type="checkbox" id="fMonitored"> Monitored only</label>
+      <label class="check"><input type="checkbox" id="fProfit"> In profit</label>
+      <button type="button" class="ghost" id="manageLabels">Manage labels</button>
+    </div>
+    <div class="labelfilter" id="labelFilter" role="group" aria-label="Filter by label"></div>
+    <div id="groups" aria-live="polite"></div>
+  </section>
+
+  <section class="panel" id="otherPanel" hidden>
+    <h2>Holdings not on the watchlist</h2>
+    <div class="tablewrap" id="otherTable"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Open orders</h2>
+    <div class="tablewrap" id="ordersTable"></div>
+  </section>
+
+  <section class="panel" id="checkPanel" hidden>
+    <h2>Last monitor check <small class="muted" id="checkAt"></small></h2>
+    <div class="tablewrap" id="checkTable"></div>
+  </section>
+</main>
+
+<!-- Trade drawer -->
+<div class="scrim" id="scrim" hidden></div>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="dTitle" hidden>
+  <div class="drawer-head">
+    <div>
+      <h2 id="dTitle">-</h2>
+      <p class="muted" id="dSub"></p>
+    </div>
+    <button type="button" class="ghost icon" id="dClose" aria-label="Close">&times;</button>
+  </div>
+  <div class="quote" id="dQuote"></div>
+  <div class="spark" id="dSpark" role="img" aria-label="Price history"></div>
+  <p class="muted small" id="dInd"></p>
+  <div class="position" id="dPos"></div>
+
+  <form id="orderForm" autocomplete="off">
+    <div class="seg full" role="group" aria-label="Side">
+      <button type="button" data-side="buy" class="on">Buy</button>
+      <button type="button" data-side="sell">Sell</button>
+    </div>
+    <div class="seg full" role="group" aria-label="Amount type">
+      <button type="button" data-amt="qty" class="on">Shares</button>
+      <button type="button" data-amt="notional">Dollars</button>
+    </div>
+    <label class="field">
+      <span id="amtLabel">Shares</span>
+      <input id="amount" inputmode="decimal" placeholder="0">
+    </label>
+    <label class="check" id="sellAllWrap" hidden><input type="checkbox" id="sellAll"> Sell entire position</label>
+    <div class="row2">
+      <label class="field">
+        <span>Order type</span>
+        <select id="orderType"><option value="market">Market</option><option value="limit">Limit</option></select>
+      </label>
+      <label class="field" id="limitWrap" hidden>
+        <span>Limit price</span>
+        <input id="limitPrice" inputmode="decimal">
+      </label>
+    </div>
+    <label class="field">
+      <span>Reason <small class="muted">saved in the trade journal</small></span>
+      <input id="reason" maxlength="200" placeholder="optional">
+    </label>
+    <div class="preview" id="preview" hidden></div>
+    <label class="check live" id="liveWrap" hidden><input type="checkbox" id="liveAck"> I understand this uses real money</label>
+    <div class="drawer-actions">
+      <button type="submit" class="secondary" id="previewBtn">Preview order</button>
+      <button type="button" class="primary" id="confirmBtn" disabled>Confirm</button>
+    </div>
+  </form>
+</aside>
+
+<!-- Label editor (per ticker) and label manager -->
+<dialog id="labelDialog">
+  <form method="dialog" id="labelDialogForm">
+    <h2 id="ldTitle">Labels</h2>
+    <div id="ldBody"></div>
+    <label class="field">
+      <span>New label</span>
+      <input id="ldNew" maxlength="32" placeholder="e.g. Dividend">
+    </label>
+    <div class="drawer-actions">
+      <button value="cancel" class="secondary">Cancel</button>
+      <button value="save" class="primary" id="ldSave">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+<script src="/app.js"></script>
+</body>
+</html>

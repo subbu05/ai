@@ -1,6 +1,22 @@
+# ---- Secrets: never commit ----
 .env
+.env.*
+!.env.example
+accounts.toml
+*.local.toml
+*secrets*.toml
+*secrets*.json
+*.pem
+*.key
+conf/
+!config/accounts.example.toml
+
+# ---- Local trading data (positions, fills, journal, reports) ----
 data/
+reports/
 .kill_switch
+
+# ---- Python ----
 __pycache__/
 *.pyc
 .pytest_cache/

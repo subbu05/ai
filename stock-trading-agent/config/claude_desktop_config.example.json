@@ -1,0 +1,32 @@
+{
+  "mcpServers": {
+    "trading-agent": {
+      "command": "/ABSOLUTE/PATH/TO/stock-trading-agent/.venv/bin/python",
+      "args": ["-m", "trading_agent", "mcp", "serve"],
+      "env": {
+        "PYTHONPATH": "/ABSOLUTE/PATH/TO/stock-trading-agent",
+        "TRADING_MODE": "paper"
+      }
+    },
+    "alpaca": {
+      "command": "uvx",
+      "args": ["alpaca-mcp-server"],
+      "env": {
+        "ALPACA_API_KEY": "your_paper_key",
+        "ALPACA_SECRET_KEY": "your_paper_secret",
+        "ALPACA_PAPER_TRADE": "true"
+      }
+    },
+    "webull": {
+      "command": "uvx",
+      "args": ["webull-openapi-mcp", "serve"],
+      "env": {
+        "WEBULL_APP_KEY": "your_app_key",
+        "WEBULL_APP_SECRET": "your_app_secret",
+        "WEBULL_REGION_ID": "us",
+        "WEBULL_ENVIRONMENT": "uat",
+        "WEBULL_MAX_ORDER_NOTIONAL_USD": "5000"
+      }
+    }
+  }
+}

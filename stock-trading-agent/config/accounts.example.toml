@@ -1,0 +1,29 @@
+# Trading account credentials for stock-trading-agent.
+# LOCAL ONLY: this file must stay outside git (or be git-ignored) and chmod 600.
+# Manage it with:  python -m trading_agent secrets set <section.key>
+# Any value may be "keyring:<name>" (OS keychain) or "env:<VAR>".
+
+[agent]
+trading_mode = "paper"        # paper | alpaca-paper | alpaca-live
+
+[anthropic]
+api_key = ""
+
+[alpaca]
+api_key_id = ""
+api_secret_key = ""
+paper_trade = "true"
+
+[webull]
+app_key = ""
+app_secret = ""
+region_id = "us"
+environment = "uat"           # uat = sandbox, prod = live
+
+[robinhood]
+mcp_token = ""
+account_number = ""           # your Agentic account number
+
+[fidelity]                    # unofficial MCP server only; see docs/MCP.md
+mcp_command = ""
+mcp_args = ""
