@@ -34,7 +34,7 @@ python -m trading_agent run buy_etf symbol=VTI notional=10000 reason="core holdi
 python -m trading_agent run get_option_chain underlying=NVDA right=call min_delta=0.2 max_delta=0.3
 python -m trading_agent positions
 python -m trading_agent journal
-pytest                                               # 36 offline tests
+pytest                                               # 52 offline tests
 ```
 
 ## Using the Claude agent
@@ -60,6 +60,28 @@ as tools, so it can't get around the risk engine or the approval prompt.
 | `alpaca-live` | Alpaca live API | **Real** | Needs `--i-understand-live-trading` on every command; `--yes` auto-approve is disabled |
 
 To add another broker (IBKR, Schwab, Tradier...), implement `trading_agent/brokers/base.py::Broker`.
+
+## Broker MCP servers (Alpaca, Webull, Robinhood, Fidelity)
+
+The agent can also connect to broker **MCP servers** and offer their tools to Claude, behind an
+MCP guard (kill switch, symbol lists, order-value cap, approval, journal). It can also serve its
+own risk-checked skills over MCP to Claude Code and Claude Desktop.
+
+| Broker | MCP server | Default |
+|---|---|---|
+| Alpaca | official `alpaca-mcp-server` (stdio) | paper |
+| Webull | official `webull-openapi-mcp` (stdio) | sandbox (`uat`) |
+| Robinhood | official Agentic Trading (remote, OAuth) | live; orders approved in the Robinhood app |
+| Fidelity | **no official server**; placeholder for an unofficial one | read-only |
+
+```bash
+python -m trading_agent mcp servers              # configured servers and what they need
+python -m trading_agent mcp tools alpaca         # list a server's tools and how they're classified
+python -m trading_agent --mcp alpaca,webull chat
+python -m trading_agent mcp serve                # serve these skills over MCP (stdio)
+```
+
+Details, setup and limits: [docs/MCP.md](docs/MCP.md).
 
 ## Skills
 
@@ -97,6 +119,7 @@ Full reference: [docs/SKILLS.md](docs/SKILLS.md). Writing your own: [docs/ARCHIT
 - [docs/SKILLS.md](docs/SKILLS.md): every skill and its parameters
 - [docs/RISK_MANAGEMENT.md](docs/RISK_MANAGEMENT.md): every risk rule and how to tune it
 - [docs/OPTIONS.md](docs/OPTIONS.md): supported option strategies and OCC symbols
+- [docs/MCP.md](docs/MCP.md): broker MCP servers (Alpaca, Webull, Robinhood, Fidelity) and `mcp serve`
 
 ## Layout
 
@@ -112,9 +135,11 @@ stock-trading-agent/
 │   ├── indicators.py       # SMA, RSI, volatility, momentum
 │   ├── options_math.py     # Black-Scholes + Greeks
 │   ├── brokers/            # base interface, paper simulator, Alpaca adapter
+│   ├── mcp_bridge/         # MCP client hub, guard, broker tool bridge, MCP server
 │   └── skills/             # market, portfolio, equity, options, strategies
-├── config/                 # risk.toml, autopilot_task.md
+├── config/                 # risk.toml, mcp_servers.toml, autopilot_task.md
 ├── docs/
 ├── tests/
+├── .mcp.json               # Claude Code MCP servers
 └── .claude/skills/         # Claude Code skills
 ```

@@ -50,6 +50,7 @@ class TradingAgent:
         effort: str | None = None,
         max_turns: int = 25,
         on_tool: ToolObserver | None = None,
+        extra_instructions: str = "",
     ):
         self.ctx = ctx
         self.registry = registry
@@ -61,6 +62,8 @@ class TradingAgent:
         self.messages: list[dict[str, Any]] = []
         self.system = SYSTEM_PROMPT.format(mode=ctx.settings.trading_mode, broker=ctx.broker.name,
                                            today=date.today().isoformat())
+        if extra_instructions:
+            self.system += "\n" + extra_instructions
 
     def run_tool(self, name: str, args: dict) -> tuple[dict, bool]:
         try:

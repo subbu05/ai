@@ -1,9 +1,9 @@
 [project]
 name = "stock-trading-agent"
-version = "0.1.0"
+version = "0.2.0"
 description = "Skill-based automated trading agent for stocks, ETFs and options, driven by Claude"
 requires-python = ">=3.11"
-dependencies = ["anthropic>=1.13"]
+dependencies = ["anthropic>=1.13", "mcp>=2.2"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]

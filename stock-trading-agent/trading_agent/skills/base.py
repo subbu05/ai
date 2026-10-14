@@ -19,6 +19,8 @@ from ..models import Order, OrderStatus
 from ..risk import RiskDecision, RiskManager
 
 Approver = Callable[[Order, RiskDecision], bool]
+# Approval for actions that aren't our own Order objects (e.g. broker MCP tools): (summary, details)
+ActionConfirmer = Callable[[str, dict], bool]
 
 
 def auto_approve(order: Order, decision: RiskDecision) -> bool:
@@ -29,6 +31,14 @@ def deny_all(order: Order, decision: RiskDecision) -> bool:
     return False
 
 
+def confirm_all(summary: str, details: dict) -> bool:
+    return True
+
+
+def confirm_none(summary: str, details: dict) -> bool:
+    return False
+
+
 @dataclass
 class SkillContext:
     broker: Broker
@@ -36,6 +46,7 @@ class SkillContext:
     journal: TradeJournal
     settings: Settings
     approver: Approver = auto_approve
+    confirm_action: ActionConfirmer = confirm_all
 
     def execute_order(self, order: Order, dry_run: bool = False) -> dict[str, Any]:
         decision = self.risk.check(order)

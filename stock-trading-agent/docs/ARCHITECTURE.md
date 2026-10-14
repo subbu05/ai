@@ -64,6 +64,20 @@ A manual tool-use loop against the Messages API:
   are capped (`max_turns=25`).
 - It uses adaptive thinking, a configurable effort level, and server-side refusal fallbacks.
 
+### `mcp_bridge/`
+- `config.py` loads `config/mcp_servers.toml`, expands `${VAR}` / `${VAR:-default}` and works
+  out whether a server is live.
+- `hub.py` (`McpHub`) runs one asyncio loop in a background thread. It keeps one long-lived
+  `mcp.Client` per server (stdio subprocess or streamable HTTP) and gives the synchronous code
+  a `call(server, tool, args)` method.
+- `guard.py` classifies each remote tool as read, trade or write, and checks trade/write calls
+  (kill switch, symbol lists, estimated order value).
+- `skills.py` registers each remote tool as a skill named `<server>__<tool>`. Non-read calls go
+  guard, then `SkillContext.confirm_action`, then the call, then the journal.
+- `server.py` serves the skill registry as an MCP server (`mcp serve`).
+
+See [MCP.md](MCP.md).
+
 ### `journal.py`
 Append-only JSONL. Events: `proposed`, `risk_rejected`, `declined`, `submitted`,
 `broker_error`, `canceled`, `autopilot_error`.
