@@ -29,6 +29,14 @@ Example, cost $100, `drop_pct = 3%`:
 | $110.00 | $106.70 | $106.50 | **sell all now** at ~$106.40 (+6.4%) |
 | $101.50 | $100.00 (floor) | $99.00 | **resting sell at $100.00** (break-even) |
 
+### Choose which stocks are monitored
+
+Use the watchlist. In the web UI (`python -m trading_agent ui`) tick **Monitor** per ticker, or
+from the command line run `python -m trading_agent watch add NVDA --label Tech` or
+`watch monitor XOM off`. Once the watchlist has entries, only ticked holdings are managed;
+watched tickers you don't own are price-tracked too. With no watchlist, every stock/ETF holding
+is managed. `symbols` / `exclude_symbols` below still narrow it further.
+
 ### Configure: `[profit_protect]` in `config/risk.toml`
 
 ```toml

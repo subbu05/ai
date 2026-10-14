@@ -124,19 +124,22 @@ class PriceTracker:
         if self.state_file.exists():
             self.state.update(json.loads(self.state_file.read_text()))
 
-    def observe(self, symbol: str, price: float, avg_cost: float, qty: float, today: str) -> dict:
+    def observe(self, symbol: str, price: float, avg_cost: float | None, qty: float, today: str) -> dict:
+        """Record a price. ``avg_cost=None`` = watched but not held (no peak tracking)."""
         if self.state["date"] != today:
             self.state["date"] = today
             self.state["days"] = {}
             self.state["triggered"] = {}
         d = self.state["days"].setdefault(symbol, {"open": price, "high": price, "low": price, "last": price})
         d["high"], d["low"], d["last"] = max(d["high"], price), min(d["low"], price), price
-        if price > avg_cost:
+        if avg_cost is not None and price > avg_cost:
             self.state["peaks"][symbol] = max(self.state["peaks"].get(symbol, price), price)
         self.log_file.parent.mkdir(parents=True, exist_ok=True)
         with self.log_file.open("a") as fh:
             fh.write(json.dumps({"ts": datetime.now(timezone.utc).isoformat(), "date": today, "symbol": symbol,
-                                 "price": round(price, 4), "avg_cost": round(avg_cost, 4), "qty": qty}) + "\n")
+                                 "price": round(price, 4),
+                                 "avg_cost": None if avg_cost is None else round(avg_cost, 4),
+                                 "qty": qty}) + "\n")
         return d
 
     def forget(self, symbol: str) -> None:
@@ -158,8 +161,12 @@ def _abs(path: str | Path) -> Path:
 
 
 def run_check(ctx: SkillContext, cfg: ProfitProtectConfig, tracker: PriceTracker,
-              execute: bool = True, today: str | None = None) -> list[Decision]:
-    """One pass over all holdings. ``execute=False`` only reports what would happen."""
+              execute: bool = True, today: str | None = None, watchlist=None) -> list[Decision]:
+    """One pass over all holdings. ``execute=False`` only reports what would happen.
+
+    With a non-empty ``watchlist``, only holdings ticked "monitor" there are managed, and
+    watched symbols you don't hold are price-tracked too (action ``watch``).
+    """
     today = today or date.today().isoformat()
     broker = ctx.broker
     if hasattr(broker, "process_open_orders"):
@@ -173,6 +180,11 @@ def run_check(ctx: SkillContext, cfg: ProfitProtectConfig, tracker: PriceTracker
             tracker.forget(sym)
 
     wanted = {s.upper() for s in cfg.symbols}
+    monitored = watchlist.monitored() if watchlist is not None else None
+    if monitored is not None:
+        wanted = (wanted & monitored) if wanted else monitored
+        if not wanted:
+            wanted = {"\0none"}  # watchlist exists but nothing ticked: manage nothing
     excluded = {s.upper() for s in cfg.exclude_symbols}
     open_sells = {o.symbol for o in broker.list_orders("open") if o.side == Side.SELL}
     decisions = []
@@ -182,7 +194,7 @@ def run_check(ctx: SkillContext, cfg: ProfitProtectConfig, tracker: PriceTracker
         day = tracker.observe(pos.symbol, price, pos.avg_entry_price, pos.qty, today)
         if (wanted and pos.symbol not in wanted) or pos.symbol in excluded or not cfg.enabled:
             decisions.append(Decision(pos.symbol, "skip", price, pos.avg_entry_price, pos.qty, None, None,
-                                      "excluded by profit_protect config"))
+                                      "not monitored (watchlist / profit_protect config)"))
             continue
         peak = tracker.state["peaks"].get(pos.symbol, price)
         action, trigger, ref, reason, limit = evaluate(price, q.bid, pos.avg_entry_price, day["high"], peak, cfg)
@@ -196,6 +208,18 @@ def run_check(ctx: SkillContext, cfg: ProfitProtectConfig, tracker: PriceTracker
                 d.result = _sell(ctx, cfg, pos, d)
                 tracker.state["triggered"][pos.symbol] = d.result
         decisions.append(d)
+    if watchlist is not None:
+        for sym in watchlist.symbols():
+            if sym in held:
+                continue
+            try:
+                q = broker.get_quote(sym)
+            except Exception as e:  # unknown ticker / data error: report, keep going
+                decisions.append(Decision(sym, "skip", 0.0, 0.0, 0, None, None, f"no quote: {e}"))
+                continue
+            price = q.last or q.mid
+            tracker.observe(sym, price, None, 0, today)
+            decisions.append(Decision(sym, "watch", price, 0.0, 0, None, None, "watched, not held"))
     tracker.save()
     return decisions
 

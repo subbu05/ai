@@ -34,7 +34,7 @@ python -m trading_agent run buy_etf symbol=VTI notional=10000 reason="core holdi
 python -m trading_agent run get_option_chain underlying=NVDA right=call min_delta=0.2 max_delta=0.3
 python -m trading_agent positions
 python -m trading_agent journal
-pytest                                               # 82 offline tests
+pytest                                               # 97 offline tests
 ```
 
 ## Using the Claude agent
@@ -74,6 +74,19 @@ python -m trading_agent secrets install-hook              # pre-commit hook that
 ```
 
 Details: [docs/ACCOUNTS.md](docs/ACCOUNTS.md).
+
+## Web UI: watchlist, labels, filters, click-to-trade
+
+```bash
+python -m trading_agent ui      # local only: http://127.0.0.1:8765
+```
+
+- Add or remove tickers, and choose which ones the profit-protection monitor manages.
+- Give them your own labels, **group by label** and **filter** by label, held, monitored or in profit.
+- **Click a ticker to buy or sell.** You get a risk-checked preview, then confirm.
+- Turn the monitor on or off, preview a check, and cancel open orders.
+
+Details: [docs/WEB_UI.md](docs/WEB_UI.md).
 
 ## Daily price tracking and profit protection
 
@@ -129,7 +142,7 @@ Details, setup and limits: [docs/MCP.md](docs/MCP.md).
 | ETFs | `buy_etf`, `sell_etf` |
 | Options | `buy_option`, `sell_option_to_close`, `sell_covered_call`, `sell_cash_secured_put`, `buy_option_to_close` |
 | Strategies | `rebalance_portfolio`, `momentum_screen` |
-| Tracking & P&L | `track_prices`, `get_price_tracking`, `get_pnl_summary` |
+| Tracking & P&L | `track_prices`, `get_price_tracking`, `get_pnl_summary`, `watchlist_list`, `watchlist_add`, `watchlist_remove` |
 
 Full reference: [docs/SKILLS.md](docs/SKILLS.md). Writing your own: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#adding-a-skill).
 
@@ -157,6 +170,7 @@ Full reference: [docs/SKILLS.md](docs/SKILLS.md). Writing your own: [docs/ARCHIT
 - [docs/RISK_MANAGEMENT.md](docs/RISK_MANAGEMENT.md): every risk rule and how to tune it
 - [docs/OPTIONS.md](docs/OPTIONS.md): supported option strategies and OCC symbols
 - [docs/ACCOUNTS.md](docs/ACCOUNTS.md): secure local credentials (never in git)
+- [docs/WEB_UI.md](docs/WEB_UI.md): web UI with watchlist, labels, filters and click-to-trade
 - [docs/MONITORING.md](docs/MONITORING.md): daily price tracking, the profit-protection rule, P&L charts
 - [docs/MCP.md](docs/MCP.md): broker MCP servers (Alpaca, Webull, Robinhood, Fidelity) and `mcp serve`
 
@@ -170,6 +184,8 @@ stock-trading-agent/
 │   ├── monitor.py          # price tracking + profit-protection rule
 │   ├── pnl.py              # fills ledger, FIFO realized P&L, equity history
 │   ├── dashboard.py        # HTML P&L charts
+│   ├── watchlist.py        # watchlist, labels, grouping, filters
+│   ├── webui/              # local web UI (server + static page)
 │   ├── cli.py              # command line entry point
 │   ├── config.py           # env + risk.toml loading
 │   ├── models.py           # Order, Position, OptionContract, ...

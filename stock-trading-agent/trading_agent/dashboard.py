@@ -32,7 +32,8 @@ def build_data(broker, data_dir: Path, mode: str) -> dict:
         d = daily[r["symbol"]].setdefault(r["date"], {"open": r["price"], "high": r["price"],
                                                        "low": r["price"], "close": r["price"]})
         d["high"], d["low"], d["close"] = max(d["high"], r["price"]), min(d["low"], r["price"]), r["price"]
-        d["cost"] = r["avg_cost"]
+        if r.get("avg_cost") is not None:
+            d["cost"] = r["avg_cost"]
     sells = defaultdict(list)
     for f in fills:
         if f.side.value == "sell":

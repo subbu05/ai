@@ -14,5 +14,8 @@ trading-agent = "trading_agent.cli:main"
 [tool.setuptools.packages.find]
 include = ["trading_agent*"]
 
+[tool.setuptools.package-data]
+"trading_agent.webui" = ["static/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

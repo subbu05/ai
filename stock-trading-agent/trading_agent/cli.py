@@ -20,6 +20,8 @@ Accounts, monitoring and P&L:
     python -m trading_agent monitor --interval 300      # daily price tracking + profit protection
     python -m trading_agent pnl                          # realized / unrealized P&L summary
     python -m trading_agent report                       # HTML charts -> reports/pnl_dashboard.html
+    python -m trading_agent ui                           # web UI: watchlist, labels, click-to-trade
+    python -m trading_agent watch add AAPL --label Tech  # watchlist from the command line
 """
 
 from __future__ import annotations
@@ -255,6 +257,64 @@ def _secrets_command(args) -> int:
     return 0
 
 
+def _watch_command(args, settings: Settings) -> int:
+    from .watchlist import Watchlist
+
+    wl = Watchlist(settings.data_dir / "watchlist.json")
+    try:
+        if args.watch_cmd == "add":
+            item = wl.add(args.symbol, args.label, monitor=not args.no_monitor)
+            print(f"Watching {item.symbol} labels={item.labels} monitor={item.monitor}")
+        elif args.watch_cmd == "remove":
+            print("Removed" if wl.remove(args.symbol) else "Not on the watchlist")
+        elif args.watch_cmd == "label":
+            print(wl.update(args.symbol, labels=args.labels).labels)
+        elif args.watch_cmd == "monitor":
+            print(wl.update(args.symbol, monitor=args.state == "on"))
+        elif args.watch_cmd == "list":
+            items = wl.filter(args.label or None)
+            if args.group:
+                for label, syms in wl.grouped(items).items():
+                    print(f"{label}: {', '.join(syms)}")
+            else:
+                for i in items:
+                    print(f"{i.symbol:8s} {'monitor' if i.monitor else '       '}  {', '.join(i.labels)}")
+    except (ValueError, KeyError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    return 0
+
+
+def _ui_command(args, settings: Settings, registry) -> int:
+    import webbrowser
+
+    from .webui.server import TradingApp, make_server
+
+    ctx = build_context(args, settings)
+    app = TradingApp(ctx, registry, simulate=args.simulate and settings.broker == "paper",
+                     monitor_interval=args.interval)
+    try:
+        server, token = make_server(app, args.port)
+    except OSError as e:
+        print(f"could not listen on 127.0.0.1:{args.port}: {e}", file=sys.stderr)
+        return 2
+    url = f"http://127.0.0.1:{server.server_address[1]}/#token={token}"
+    if args.monitor:
+        app.set_monitor(True)
+    print(f"Trading UI ({settings.trading_mode}) running at:\n  {url}\n"
+          "Only this computer can reach it. Keep the link private (it carries the session token). Ctrl+C to stop.")
+    if not args.no_browser:
+        webbrowser.open(url)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        app.stop()
+        server.server_close()
+    return 0
+
+
 def _tracking_command(args, settings: Settings) -> int:
     from .dashboard import write_dashboard
     from .monitor import PriceTracker, ProfitProtectConfig, market_open, run_check
@@ -274,9 +334,12 @@ def _tracking_command(args, settings: Settings) -> int:
         print(f"Wrote {write_dashboard(ctx.broker, data, out, settings.trading_mode)}")
         return 0
 
+    from .watchlist import Watchlist
+
     cfg = ProfitProtectConfig.load()
     tracker = PriceTracker(data / "price_tracker.json", data / "price_log.jsonl")
     equity = EquityHistory(data / "equity_history.jsonl")
+    watchlist = Watchlist(data / "watchlist.json")
     print(f"Profit protection: sell all of a profitable stock/ETF after a {cfg.drop_pct:.0%} drop from "
           f"{cfg.reference.replace('_', ' ')}, never below cost. "
           f"{'DRY RUN' if args.dry_run else 'auto-sell' if cfg.auto_sell else 'asks before selling'}"
@@ -290,7 +353,7 @@ def _tracking_command(args, settings: Settings) -> int:
         if cfg.respect_market_hours and not args.ignore_hours and not market_open(ctx.broker):
             print(f"[{stamp}] market closed; skipping")
         else:
-            for d in run_check(ctx, cfg, tracker, execute=not args.dry_run):
+            for d in run_check(ctx, cfg, tracker, execute=not args.dry_run, watchlist=watchlist):
                 extra = f" -> {d.result}" if d.result else ""
                 trig = f" trigger {d.trigger:.2f}" if d.trigger else ""
                 print(f"[{stamp}] {d.symbol:6s} {d.action:12s} price {d.price:.2f} cost {d.avg_cost:.2f}"
@@ -366,6 +429,29 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--dry-run", action="store_true", help="report decisions but never sell")
     p.add_argument("--simulate", action="store_true", help="paper only: move simulated prices each check")
     p.add_argument("--ignore-hours", action="store_true", help="check even when the market is closed")
+    p = sub.add_parser("ui", help="local web UI: watchlist, labels, filters, click-to-trade, monitor")
+    p.add_argument("--port", type=int, default=8765)
+    p.add_argument("--monitor", action="store_true", help="start profit protection immediately")
+    p.add_argument("--interval", type=int, default=300, help="monitor interval in seconds")
+    p.add_argument("--simulate", action="store_true", help="paper only: move simulated prices")
+    p.add_argument("--no-browser", action="store_true")
+    p = sub.add_parser("watch", help="manage the watchlist from the command line")
+    wsub = p.add_subparsers(dest="watch_cmd", required=True)
+    wp = wsub.add_parser("add", help="add a ticker, e.g. watch add AAPL --label Tech --label Core")
+    wp.add_argument("symbol")
+    wp.add_argument("--label", action="append", default=[])
+    wp.add_argument("--no-monitor", action="store_true")
+    wp = wsub.add_parser("remove")
+    wp.add_argument("symbol")
+    wp = wsub.add_parser("label", help="set a ticker's labels (replaces them)")
+    wp.add_argument("symbol")
+    wp.add_argument("labels", nargs="*")
+    wp = wsub.add_parser("monitor", help="turn profit protection on/off for a ticker")
+    wp.add_argument("symbol")
+    wp.add_argument("state", choices=["on", "off"])
+    wp = wsub.add_parser("list")
+    wp.add_argument("--label", action="append", default=[], help="filter (any of)")
+    wp.add_argument("--group", action="store_true", help="group by label")
     sub.add_parser("pnl", help="realized profit / loss summary")
     p = sub.add_parser("report", help="write the HTML P&L dashboard")
     p.add_argument("--out", default="reports/pnl_dashboard.html")
@@ -404,6 +490,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd in ("monitor", "pnl", "report"):
         return _tracking_command(args, settings)
+    if args.cmd == "watch":
+        return _watch_command(args, settings)
+    if args.cmd == "ui":
+        return _ui_command(args, settings, registry)
 
     hub, statuses = (None, [])
     if args.cmd in ("skills", "run", "ask", "chat", "autopilot"):
