@@ -9,7 +9,8 @@
 cd stock-trading-agent
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-cp .env.example .env
+python -m trading_agent secrets init      # ~/.config/stock-trading-agent/accounts.toml
+python -m trading_agent secrets install-hook
 pytest
 ```
 
@@ -20,13 +21,13 @@ No keys needed. `TRADING_MODE=paper` uses the built-in simulator. Account state 
 
 ## 2. Claude agent
 
-Get an API key from the Claude Console and put it in `.env`:
+Get an API key from the Claude Console and store it in the local accounts file:
 
+```bash
+python -m trading_agent secrets set anthropic.api_key
 ```
-ANTHROPIC_API_KEY=sk-ant-...
-AGENT_MODEL=claude-opus-5-5
-AGENT_EFFORT=high          # low | medium | high | xhigh | max
-```
+
+Optional, in `.env`: `AGENT_MODEL=claude-opus-5-5`, `AGENT_EFFORT=high`.
 
 Try it: `python -m trading_agent ask "Summarise my account and positions"`.
 
@@ -34,11 +35,11 @@ Try it: `python -m trading_agent ask "Summarise my account and positions"`.
 
 1. Create an account at alpaca.markets and generate **paper** API keys.
 2. Turn on options trading for the paper account if you want options.
-3. In `.env`:
-   ```
-   TRADING_MODE=alpaca-paper
-   ALPACA_API_KEY_ID=...
-   ALPACA_API_SECRET_KEY=...
+3. Store the keys and switch mode:
+   ```bash
+   python -m trading_agent secrets set alpaca.api_key_id
+   python -m trading_agent secrets set alpaca.api_secret_key
+   python -m trading_agent secrets set agent.trading_mode     # alpaca-paper
    ```
 4. Check it with `python -m trading_agent account`.
 
@@ -50,6 +51,10 @@ Try it: `python -m trading_agent ask "Summarise my account and positions"`.
    ```bash
    python -m trading_agent --i-understand-live-trading account
    ```
+
+## Daily price monitor
+
+See [MONITORING.md](MONITORING.md). Short version: `python -m trading_agent monitor`.
 
 ## Scheduling autopilot
 

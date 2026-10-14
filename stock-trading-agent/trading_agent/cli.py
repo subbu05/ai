@@ -14,6 +14,12 @@ Broker MCP servers (see docs/MCP.md):
     python -m trading_agent --mcp alpaca mcp tools alpaca
     python -m trading_agent --mcp alpaca,webull chat
     python -m trading_agent mcp serve   # expose these skills to Claude Code / Desktop
+
+Accounts, monitoring and P&L:
+    python -m trading_agent secrets init / set alpaca.api_key_id / check / install-hook
+    python -m trading_agent monitor --interval 300      # daily price tracking + profit protection
+    python -m trading_agent pnl                          # realized / unrealized P&L summary
+    python -m trading_agent report                       # HTML charts -> reports/pnl_dashboard.html
 """
 
 from __future__ import annotations
@@ -196,6 +202,106 @@ def _mcp_command(args, settings: Settings, registry) -> int:
     return 2
 
 
+def _secrets_command(args) -> int:
+    import getpass
+    import shutil
+    import subprocess
+
+    from . import credentials as cred
+
+    path = cred.secrets_path()
+    try:
+        if args.secrets_cmd == "path":
+            print(path)
+        elif args.secrets_cmd == "init":
+            print(f"Created {cred.init_secrets(path, force=args.force)} (mode 600). "
+                  "Fill it in with: python -m trading_agent secrets set <section.key>")
+        elif args.secrets_cmd == "set":
+            value = sys.stdin.readline().strip() if args.stdin else getpass.getpass(f"{args.key}: ")
+            cred.set_secret(args.key, value, path, use_keyring=args.keyring)
+            print(f"Saved {args.key} to {'OS keychain' if args.keyring else path}")
+        elif args.secrets_cmd == "check":
+            problems, rows = cred.status(path)
+            print(f"Accounts file: {path} ({'exists' if path.exists() else 'not created - run secrets init'})")
+            for p in problems:
+                print(f"  PROBLEM: {p}")
+            env_file = PROJECT_ROOT / ".env"
+            if env_file.exists():
+                for p in (cred.permission_problem(env_file), cred.git_problem(env_file)):
+                    if p:
+                        print(f"  PROBLEM: {p}")
+            for r in rows:
+                print(f"  {r.setting:28s} {r.source:8s} {r.preview}")
+            return 1 if problems else 0
+        elif args.secrets_cmd == "install-hook":
+            top = subprocess.run(["git", "-C", str(PROJECT_ROOT), "rev-parse", "--git-path", "hooks"],
+                                 capture_output=True, text=True)
+            if top.returncode != 0:
+                print("not inside a git repository", file=sys.stderr)
+                return 2
+            hooks = Path(top.stdout.strip())
+            hooks = hooks if hooks.is_absolute() else PROJECT_ROOT / hooks
+            dest = hooks / "pre-commit"
+            if dest.exists() and not args.force:
+                print(f"{dest} already exists (use --force to replace)", file=sys.stderr)
+                return 2
+            hooks.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(PROJECT_ROOT / "scripts" / "pre-commit-secrets.py", dest)
+            dest.chmod(0o755)
+            print(f"Installed {dest}")
+    except cred.SecretsError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    return 0
+
+
+def _tracking_command(args, settings: Settings) -> int:
+    from .dashboard import write_dashboard
+    from .monitor import PriceTracker, ProfitProtectConfig, market_open, run_check
+    from .pnl import EquityHistory, PnlLedger, pnl_report
+
+    ctx = build_context(args, settings)
+    data = settings.data_dir
+    ledger = PnlLedger(data / "fills.jsonl")
+    if args.cmd == "pnl":
+        report = pnl_report(ctx.broker, ledger)
+        report.pop("open_positions", None)
+        _print(report)
+        return 0
+    if args.cmd == "report":
+        out = Path(args.out)
+        out = out if out.is_absolute() else PROJECT_ROOT / out
+        print(f"Wrote {write_dashboard(ctx.broker, data, out, settings.trading_mode)}")
+        return 0
+
+    cfg = ProfitProtectConfig.load()
+    tracker = PriceTracker(data / "price_tracker.json", data / "price_log.jsonl")
+    equity = EquityHistory(data / "equity_history.jsonl")
+    print(f"Profit protection: sell all of a profitable stock/ETF after a {cfg.drop_pct:.0%} drop from "
+          f"{cfg.reference.replace('_', ' ')}, never below cost. "
+          f"{'DRY RUN' if args.dry_run else 'auto-sell' if cfg.auto_sell else 'asks before selling'}"
+          f"{' (live: asks unless auto_sell_live)' if settings.is_live and not cfg.auto_sell_live else ''}")
+    n = 0
+    while True:
+        n += 1
+        stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        if args.simulate and hasattr(ctx.broker, "tick"):
+            ctx.broker.tick()
+        if cfg.respect_market_hours and not args.ignore_hours and not market_open(ctx.broker):
+            print(f"[{stamp}] market closed; skipping")
+        else:
+            for d in run_check(ctx, cfg, tracker, execute=not args.dry_run):
+                extra = f" -> {d.result}" if d.result else ""
+                trig = f" trigger {d.trigger:.2f}" if d.trigger else ""
+                print(f"[{stamp}] {d.symbol:6s} {d.action:12s} price {d.price:.2f} cost {d.avg_cost:.2f}"
+                      f"{trig}{extra}  ({d.reason})")
+            equity.snapshot(ctx.broker)
+            ledger.sync(ctx.broker)
+        if args.once or (args.iterations and n >= args.iterations):
+            return 0
+        time.sleep(args.interval)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="trading_agent", description="Automated stock/ETF/options agent")
     parser.add_argument("--yes", action="store_true",
@@ -240,8 +346,38 @@ def main(argv: list[str] | None = None) -> int:
     mp.add_argument("--allow-live-orders", action="store_true",
                     help="let order skills execute in alpaca-live mode (needs --i-understand-live-trading)")
 
+    p = sub.add_parser("secrets", help="manage the local (git-ignored) trading accounts file")
+    ssub = p.add_subparsers(dest="secrets_cmd", required=True)
+    sp = ssub.add_parser("init", help="create the accounts file (chmod 600) from the template")
+    sp.add_argument("--force", action="store_true")
+    ssub.add_parser("check", help="show which credentials are set (masked) and verify file safety")
+    ssub.add_parser("path", help="print the accounts file location")
+    sp = ssub.add_parser("set", help="set one value, e.g. alpaca.api_key_id (prompts without echo)")
+    sp.add_argument("key")
+    sp.add_argument("--keyring", action="store_true", help="store in the OS keychain instead of the file")
+    sp.add_argument("--stdin", action="store_true", help="read the value from stdin")
+    sp = ssub.add_parser("install-hook", help="install a git pre-commit hook that blocks committing secrets")
+    sp.add_argument("--force", action="store_true")
+
+    p = sub.add_parser("monitor", help="track holdings' prices and apply the profit-protection rule")
+    p.add_argument("--once", action="store_true", help="run a single check (for cron)")
+    p.add_argument("--interval", type=int, default=300, help="seconds between checks (default 300)")
+    p.add_argument("--iterations", type=int, default=0, help="0 = until stopped")
+    p.add_argument("--dry-run", action="store_true", help="report decisions but never sell")
+    p.add_argument("--simulate", action="store_true", help="paper only: move simulated prices each check")
+    p.add_argument("--ignore-hours", action="store_true", help="check even when the market is closed")
+    sub.add_parser("pnl", help="realized profit / loss summary")
+    p = sub.add_parser("report", help="write the HTML P&L dashboard")
+    p.add_argument("--out", default="reports/pnl_dashboard.html")
+
     args = parser.parse_args(argv)
-    settings = Settings.from_env()
+    if args.cmd == "secrets":
+        return _secrets_command(args)
+    try:
+        settings = Settings.from_env()
+    except Exception as e:  # SecretsError, bad config
+        print(f"configuration error: {e}", file=sys.stderr)
+        return 2
 
     if settings.is_live and not args.live_ack:
         print("TRADING_MODE=alpaca-live: real money. Re-run with --i-understand-live-trading.", file=sys.stderr)
@@ -265,6 +401,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "describe":
         _print(registry.get(args.skill).to_tool())
         return 0
+
+    if args.cmd in ("monitor", "pnl", "report"):
+        return _tracking_command(args, settings)
 
     hub, statuses = (None, [])
     if args.cmd in ("skills", "run", "ask", "chat", "autopilot"):

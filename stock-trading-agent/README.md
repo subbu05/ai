@@ -25,7 +25,7 @@ skill ──► RiskManager.check ──► human approval ──► broker ─�
 cd stock-trading-agent
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-cp .env.example .env            # defaults to TRADING_MODE=paper (local simulator)
+python -m trading_agent secrets init   # local credentials file (only needed for real brokers)
 
 python -m trading_agent skills                       # list every skill
 python -m trading_agent account
@@ -34,12 +34,12 @@ python -m trading_agent run buy_etf symbol=VTI notional=10000 reason="core holdi
 python -m trading_agent run get_option_chain underlying=NVDA right=call min_delta=0.2 max_delta=0.3
 python -m trading_agent positions
 python -m trading_agent journal
-pytest                                               # 52 offline tests
+pytest                                               # 82 offline tests
 ```
 
 ## Using the Claude agent
 
-Set `ANTHROPIC_API_KEY` in `.env` (or run `ant auth login`), then:
+Run `python -m trading_agent secrets set anthropic.api_key` (or `ant auth login`), then:
 
 ```bash
 python -m trading_agent ask "What's my allocation? Rebalance to 60% VTI / 30% AGG, show me the plan first."
@@ -60,6 +60,42 @@ as tools, so it can't get around the risk engine or the approval prompt.
 | `alpaca-live` | Alpaca live API | **Real** | Needs `--i-understand-live-trading` on every command; `--yes` auto-approve is disabled |
 
 To add another broker (IBKR, Schwab, Tradier...), implement `trading_agent/brokers/base.py::Broker`.
+
+## Accounts: secure local config
+
+Credentials for every broker live in `~/.config/stock-trading-agent/accounts.toml`, outside
+the repo. The code refuses to use the file unless it's `chmod 600` and not committable to git.
+
+```bash
+python -m trading_agent secrets init
+python -m trading_agent secrets set alpaca.api_key_id     # prompts, no echo
+python -m trading_agent secrets check                     # masked view + safety checks
+python -m trading_agent secrets install-hook              # pre-commit hook that blocks secrets
+```
+
+Details: [docs/ACCOUNTS.md](docs/ACCOUNTS.md).
+
+## Daily price tracking and profit protection
+
+```bash
+python -m trading_agent monitor            # check holdings every 5 minutes
+```
+
+If a stock or ETF that has been **in profit** falls `drop_pct` (1–10%, default 3%) from
+today's high, the monitor sells **the whole position while it's still in profit**. Worst case,
+it sells at your purchase price, never below. Configure it under `[profit_protect]` in
+`config/risk.toml`. Details: [docs/MONITORING.md](docs/MONITORING.md).
+
+## P&L charts
+
+```bash
+python -m trading_agent pnl                # realized profit / loss / net, win rate, unrealized
+python -m trading_agent report             # reports/pnl_dashboard.html
+python scripts/demo_monitor.py --days 30   # demo dashboard from 30 simulated days
+```
+
+Charts: cumulative and daily realized P&L, P&L by symbol, equity curve, and each holding's
+tracked daily price against its cost, with sells marked.
 
 ## Broker MCP servers (Alpaca, Webull, Robinhood, Fidelity)
 
@@ -93,6 +129,7 @@ Details, setup and limits: [docs/MCP.md](docs/MCP.md).
 | ETFs | `buy_etf`, `sell_etf` |
 | Options | `buy_option`, `sell_option_to_close`, `sell_covered_call`, `sell_cash_secured_put`, `buy_option_to_close` |
 | Strategies | `rebalance_portfolio`, `momentum_screen` |
+| Tracking & P&L | `track_prices`, `get_price_tracking`, `get_pnl_summary` |
 
 Full reference: [docs/SKILLS.md](docs/SKILLS.md). Writing your own: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#adding-a-skill).
 
@@ -119,6 +156,8 @@ Full reference: [docs/SKILLS.md](docs/SKILLS.md). Writing your own: [docs/ARCHIT
 - [docs/SKILLS.md](docs/SKILLS.md): every skill and its parameters
 - [docs/RISK_MANAGEMENT.md](docs/RISK_MANAGEMENT.md): every risk rule and how to tune it
 - [docs/OPTIONS.md](docs/OPTIONS.md): supported option strategies and OCC symbols
+- [docs/ACCOUNTS.md](docs/ACCOUNTS.md): secure local credentials (never in git)
+- [docs/MONITORING.md](docs/MONITORING.md): daily price tracking, the profit-protection rule, P&L charts
 - [docs/MCP.md](docs/MCP.md): broker MCP servers (Alpaca, Webull, Robinhood, Fidelity) and `mcp serve`
 
 ## Layout
@@ -127,6 +166,10 @@ Full reference: [docs/SKILLS.md](docs/SKILLS.md). Writing your own: [docs/ARCHIT
 stock-trading-agent/
 ├── trading_agent/
 │   ├── agent.py            # Claude tool-use loop
+│   ├── credentials.py      # secure local accounts file
+│   ├── monitor.py          # price tracking + profit-protection rule
+│   ├── pnl.py              # fills ledger, FIFO realized P&L, equity history
+│   ├── dashboard.py        # HTML P&L charts
 │   ├── cli.py              # command line entry point
 │   ├── config.py           # env + risk.toml loading
 │   ├── models.py           # Order, Position, OptionContract, ...
@@ -137,7 +180,8 @@ stock-trading-agent/
 │   ├── brokers/            # base interface, paper simulator, Alpaca adapter
 │   ├── mcp_bridge/         # MCP client hub, guard, broker tool bridge, MCP server
 │   └── skills/             # market, portfolio, equity, options, strategies
-├── config/                 # risk.toml, mcp_servers.toml, autopilot_task.md
+├── config/                 # risk.toml, mcp_servers.toml, accounts.example.toml, autopilot_task.md
+├── scripts/                # pre-commit secrets hook, demo_monitor.py
 ├── docs/
 ├── tests/
 ├── .mcp.json               # Claude Code MCP servers

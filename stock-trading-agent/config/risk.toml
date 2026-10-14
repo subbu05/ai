@@ -15,3 +15,19 @@ allow_naked_options = false      # only covered calls and cash-secured puts may 
 allowed_symbols = []             # e.g. ["SPY", "QQQ", "AAPL"]; empty = everything
 blocked_symbols = []             # e.g. ["GME"]
 kill_switch_file = ".kill_switch"
+
+# Daily price tracking + profit protection (python -m trading_agent monitor).
+# For each stock/ETF that has been in profit: if the price falls drop_pct from the reference
+# (today's high, or the peak since in profit), sell the WHOLE position while still in profit.
+# If it has already fallen to cost, a limit sell rests AT cost: it never sells below what you paid.
+[profit_protect]
+enabled = true
+drop_pct = 0.03                  # allowed range 0.01 .. 0.10 (1% .. 10%)
+reference = "day_high"           # "day_high" (resets daily) or "peak" (highest since in profit)
+min_profit_pct = 0.01            # arm only once the price has been >= 1% above cost (avoids noise)
+include_etfs = true
+symbols = []                     # empty = every stock/ETF holding
+exclude_symbols = []
+auto_sell = true                 # execute without a prompt on paper / alpaca-paper
+auto_sell_live = false           # set true to also auto-sell on a LIVE account (real money)
+respect_market_hours = true      # Alpaca: only act while the market is open

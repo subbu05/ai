@@ -136,6 +136,15 @@ class Order:
                 d[k] = v.isoformat()
         return d
 
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "Order":
+        enums = {"side": Side, "asset_class": AssetClass, "order_type": OrderType,
+                 "time_in_force": TimeInForce, "status": OrderStatus, "intent": PositionIntent}
+        kw = {k: (enums[k](v) if k in enums and v is not None else v) for k, v in d.items()}
+        if kw.get("submitted_at"):
+            kw["submitted_at"] = datetime.fromisoformat(kw["submitted_at"])
+        return cls(**kw)
+
 
 @dataclass
 class Position:
@@ -189,3 +198,34 @@ class Account:
             "day_pl": round(self.day_pl, 2),
             "options_level": self.options_level,
         }
+
+
+@dataclass
+class Fill:
+    """One execution. The source of truth for realized P&L."""
+
+    id: str
+    symbol: str
+    side: Side
+    qty: float
+    price: float
+    asset_class: AssetClass
+    timestamp: datetime
+    order_id: str = ""
+    commission: float = 0.0
+
+    @property
+    def multiplier(self) -> int:
+        return 100 if self.asset_class == AssetClass.OPTION else 1
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"id": self.id, "symbol": self.symbol, "side": self.side.value, "qty": self.qty,
+                "price": self.price, "asset_class": self.asset_class.value,
+                "timestamp": self.timestamp.isoformat(), "order_id": self.order_id,
+                "commission": self.commission}
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "Fill":
+        return cls(d["id"], d["symbol"], Side(d["side"]), float(d["qty"]), float(d["price"]),
+                   AssetClass(d["asset_class"]), datetime.fromisoformat(d["timestamp"]),
+                   d.get("order_id", ""), float(d.get("commission", 0.0)))
