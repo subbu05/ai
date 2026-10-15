@@ -144,6 +144,39 @@
 </aside>
 
 <!-- Label editor (per ticker) and label manager -->
+<dialog id="basketDialog" aria-labelledby="bkTitle">
+  <form method="dialog" id="basketForm" autocomplete="off">
+    <h2 id="bkTitle">Buy all</h2>
+    <p class="muted small" id="bkSub"></p>
+    <label class="field">
+      <span>Total amount to invest ($) <small class="muted">split equally across the tickers</small></span>
+      <input id="bkAmount" inputmode="decimal" placeholder="e.g. 10000" required>
+    </label>
+    <div class="seg full" role="group" aria-label="Order type">
+      <button type="button" data-bktype="market" class="on">Market price</button>
+      <button type="button" data-bktype="limit">Limit below market</button>
+    </div>
+    <div class="row2" id="bkLimitRow" hidden>
+      <label class="field">
+        <span>Discount below market (%)</span>
+        <input id="bkDiscount" inputmode="decimal" value="5">
+      </label>
+      <label class="field">
+        <span>Keep order open</span>
+        <select id="bkTif"><option value="day">For today</option><option value="gtc">Until cancelled</option></select>
+      </label>
+    </div>
+    <label class="check"><input type="checkbox" id="bkSkipHeld"> Skip tickers I already own</label>
+    <div class="tablewrap" id="bkPreview"></div>
+    <label class="check live" id="bkLiveWrap" hidden><input type="checkbox" id="bkLiveAck"> I understand this uses real money</label>
+    <div class="drawer-actions">
+      <button value="cancel" class="secondary" formnovalidate>Close</button>
+      <button type="button" class="secondary" id="bkPreviewBtn">Preview</button>
+      <button type="button" class="primary" id="bkConfirm" disabled>Place orders</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="labelDialog">
   <form method="dialog" id="labelDialogForm">
     <h2 id="ldTitle">Labels</h2>

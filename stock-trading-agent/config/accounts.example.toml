@@ -14,6 +14,13 @@ api_key_id = ""
 api_secret_key = ""
 paper_trade = "true"
 
+[market_data]
+provider = "yahoo"            # live prices for paper trading: simulated | yahoo | finnhub | alpaca
+                              # fallback chain allowed, e.g. "finnhub,yahoo"
+
+[finnhub]
+api_key = ""                  # free key from finnhub.io (real-time US quotes)
+
 [webull]
 app_key = ""
 app_secret = ""

@@ -47,7 +47,7 @@ python -m trading_agent account
 python -m trading_agent quote SPY AAPL
 python -m trading_agent run buy_etf symbol=VTI notional=10000 reason="core holding"
 python -m trading_agent positions
-pytest                                   # 97 offline tests
+pytest                                   # 115 offline tests
 ```
 
 Requires **Python 3.11+**. Paper trading uses a built-in simulator. To connect a real broker,
@@ -101,9 +101,23 @@ python -m trading_agent ui      # local only: http://127.0.0.1:8765
 - Add or remove tickers, and choose which ones the profit-protection monitor manages.
 - Give them your own labels, **group by label** and **filter** by label, held, monitored or in profit.
 - **Click a ticker to buy or sell.** You get a risk-checked preview, then confirm.
+- **Buy all tickers in a label** with an equal dollar split, at market or as limit orders
+  5% (adjustable) below market. Command line: `python -m trading_agent basket Tech 10000 --limit`.
 - Turn the monitor on or off, preview a check, and cancel open orders.
 
 Details: [docs/WEB_UI.md](docs/WEB_UI.md).
+
+## Live prices
+
+Paper trading can run on live prices from **Yahoo Finance** (no key), **Finnhub** (free key,
+real-time) or **Alpaca** (free account, real-time IEX), with caching and automatic fallback:
+
+```bash
+python -m trading_agent secrets set market_data.provider    # yahoo | finnhub,yahoo | alpaca,yahoo
+python -m trading_agent quote AAPL MSFT                     # price + source
+```
+
+Details: [docs/MARKET_DATA.md](docs/MARKET_DATA.md).
 
 ## Daily price tracking and profit protection
 
@@ -159,6 +173,7 @@ Details, setup and limits: [docs/MCP.md](docs/MCP.md).
 | ETFs | `buy_etf`, `sell_etf` |
 | Options | `buy_option`, `sell_option_to_close`, `sell_covered_call`, `sell_cash_secured_put`, `buy_option_to_close` |
 | Strategies | `rebalance_portfolio`, `momentum_screen` |
+| Baskets | `buy_label_basket` |
 | Tracking & P&L | `track_prices`, `get_price_tracking`, `get_pnl_summary`, `watchlist_list`, `watchlist_add`, `watchlist_remove` |
 
 Full reference: [docs/SKILLS.md](docs/SKILLS.md). Writing your own: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#adding-a-skill).
@@ -187,6 +202,7 @@ Full reference: [docs/SKILLS.md](docs/SKILLS.md). Writing your own: [docs/ARCHIT
 - [docs/RISK_MANAGEMENT.md](docs/RISK_MANAGEMENT.md): every risk rule and how to tune it
 - [docs/OPTIONS.md](docs/OPTIONS.md): supported option strategies and OCC symbols
 - [docs/ACCOUNTS.md](docs/ACCOUNTS.md): secure local credentials (never in git)
+- [docs/MARKET_DATA.md](docs/MARKET_DATA.md): live price sources (Yahoo, Finnhub, Alpaca)
 - [docs/WEB_UI.md](docs/WEB_UI.md): web UI with watchlist, labels, filters and click-to-trade
 - [docs/MONITORING.md](docs/MONITORING.md): daily price tracking, the profit-protection rule, P&L charts
 - [docs/MCP.md](docs/MCP.md): broker MCP servers (Alpaca, Webull, Robinhood, Fidelity) and `mcp serve`
@@ -202,6 +218,8 @@ stock-trading-agent/
 │   ├── pnl.py              # fills ledger, FIFO realized P&L, equity history
 │   ├── dashboard.py        # HTML P&L charts
 │   ├── watchlist.py        # watchlist, labels, grouping, filters
+│   ├── basket.py           # buy all tickers in a label, equal split
+│   ├── market_data.py      # live prices: Yahoo, Finnhub, Alpaca (+ cache/fallback)
 │   ├── webui/              # local web UI (server + static page)
 │   ├── cli.py              # command line entry point
 │   ├── config.py           # env + risk.toml loading

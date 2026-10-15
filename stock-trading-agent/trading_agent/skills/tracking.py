@@ -60,6 +60,21 @@ def watchlist_remove(ctx: SkillContext, symbol: str) -> dict:
     return {"removed": Watchlist(ctx.settings.data_dir / "watchlist.json").remove(symbol)}
 
 
+def buy_label_basket(ctx: SkillContext, label: str, amount: float, order_type: str = "market",
+                     discount_pct: float = 0.05, time_in_force: str = "day", skip_held: bool = False,
+                     dry_run: bool = True) -> dict:
+    from ..basket import BasketError, plan_basket, run_basket
+    from ..skills import default_registry
+    from ..watchlist import Watchlist
+
+    wl = Watchlist(ctx.settings.data_dir / "watchlist.json")
+    try:
+        plan = plan_basket(ctx, wl, label, amount, order_type, discount_pct, time_in_force, skip_held)
+        return run_basket(ctx, default_registry(), plan, dry_run=dry_run).to_dict()
+    except (BasketError, ValueError) as e:
+        return {"status": "invalid", "error": str(e)}
+
+
 def register(reg: SkillRegistry) -> None:
     reg.register(Skill(
         "track_prices",
@@ -80,6 +95,20 @@ def register(reg: SkillRegistry) -> None:
     reg.register(Skill(
         "watchlist_remove", "Remove a ticker from the watchlist (does not sell anything).",
         schema({"symbol": {"type": "string"}}, ["symbol"]), watchlist_remove, tags=["monitor"]))
+    reg.register(Skill(
+        "buy_label_basket",
+        "Buy every watchlist ticker that has a given label, splitting `amount` dollars equally "
+        "(whole shares). order_type 'market' buys at the market; 'limit' places limit orders "
+        "discount_pct below the current price (default 0.05 = 5%), which fill only if the price "
+        "drops. Each order is risk-checked. dry_run defaults to TRUE: show the plan, then re-run "
+        "with dry_run=false after the user confirms.",
+        schema({"label": {"type": "string"}, "amount": {"type": "number", "exclusiveMinimum": 0},
+                "order_type": {"type": "string", "enum": ["market", "limit"], "default": "market"},
+                "discount_pct": {"type": "number", "exclusiveMinimum": 0, "maximum": 0.5, "default": 0.05},
+                "time_in_force": {"type": "string", "enum": ["day", "gtc"], "default": "day"},
+                "skip_held": {"type": "boolean", "default": False},
+                "dry_run": {"type": "boolean", "default": True}}, ["label", "amount"]),
+        buy_label_basket, places_orders=True, tags=["trade", "strategy", "watchlist"]))
     reg.register(Skill(
         "get_price_tracking", "Today's tracked open/high/low/last per holding and peaks since in profit.",
         schema({}), get_price_tracking, tags=["monitor"]))

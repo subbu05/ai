@@ -22,6 +22,7 @@ Accounts, monitoring and P&L:
     python -m trading_agent report                       # HTML charts -> reports/pnl_dashboard.html
     python -m trading_agent ui                           # web UI: watchlist, labels, click-to-trade
     python -m trading_agent watch add AAPL --label Tech  # watchlist from the command line
+    python -m trading_agent basket Tech 10000 --limit    # buy all "Tech" tickers, equal split, 5% below
 """
 
 from __future__ import annotations
@@ -285,6 +286,55 @@ def _watch_command(args, settings: Settings) -> int:
     return 0
 
 
+def _basket_command(args, settings: Settings, registry) -> int:
+    import dataclasses
+
+    from .basket import BasketError, plan_basket, run_basket
+    from .watchlist import Watchlist
+
+    ctx = build_context(args, settings)
+    wl = Watchlist(settings.data_dir / "watchlist.json")
+    kw = dict(order_type="limit" if args.limit else "market", discount_pct=args.discount / 100,
+              time_in_force="gtc" if args.gtc else "day", skip_held=args.skip_held)
+    try:
+        plan = run_basket(ctx, registry, plan_basket(ctx, wl, args.label, args.amount, **kw), dry_run=True)
+    except (BasketError, ValueError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+
+    mode = (f"LIMIT {plan.discount_pct:.1%} below market, {plan.time_in_force.upper()}"
+            if plan.order_type == "limit" else "MARKET")
+    print(f"Basket '{plan.label}': ${plan.amount:,.2f} split across {len(plan.legs)} tickers "
+          f"(${plan.per_ticker:,.2f} each), {mode}")
+    print(f"{'Ticker':8s} {'Market':>10s} {'Order px':>10s} {'Qty':>6s} {'Est cost':>12s}  Status")
+    for l in plan.legs:
+        print(f"{l.symbol:8s} {l.market_price or 0:>10.2f} {l.order_price or 0:>10.2f} {l.qty:>6d} "
+              f"{l.est_cost:>12,.2f}  {l.status}{' - ' + l.note if l.note else ''}")
+    d = plan.to_dict()
+    print(f"Estimated total ${d['est_total']:,.2f}, leftover ${d['leftover']:,.2f}")
+    for w in plan.warnings:
+        print(f"  ! {w}")
+    ok_legs = [l for l in plan.legs if l.status == "preview_only"]
+    if not ok_legs:
+        print("Nothing to place.")
+        return 1
+    auto = args.yes or (not settings.require_approval and not settings.is_live)
+    prompt = f"Place {len(ok_legs)} order(s) for about ${sum(l.est_cost for l in ok_legs):,.2f}? [y/N] "
+    if not auto and not _ask(prompt):
+        print("Cancelled.")
+        return 1
+    # One confirmation covers the basket; each leg is still risk-checked and journaled.
+    bctx = dataclasses.replace(ctx, approver=auto_approve)
+    try:
+        done = run_basket(bctx, registry, plan_basket(bctx, wl, args.label, args.amount, **kw), dry_run=False)
+    except BasketError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    for l in done.legs:
+        print(f"{l.symbol:8s} {l.status}{' - ' + l.note if l.note else ''}")
+    return 0
+
+
 def _ui_command(args, settings: Settings, registry) -> int:
     import webbrowser
 
@@ -452,6 +502,13 @@ def main(argv: list[str] | None = None) -> int:
     wp = wsub.add_parser("list")
     wp.add_argument("--label", action="append", default=[], help="filter (any of)")
     wp.add_argument("--group", action="store_true", help="group by label")
+    p = sub.add_parser("basket", help="buy every ticker under a label with an equal dollar split")
+    p.add_argument("label")
+    p.add_argument("amount", type=float, help="total dollars to spend, split equally")
+    p.add_argument("--limit", action="store_true", help="limit orders below market instead of market orders")
+    p.add_argument("--discount", type=float, default=5.0, help="limit discount in percent (default 5)")
+    p.add_argument("--gtc", action="store_true", help="keep limit orders open until cancelled")
+    p.add_argument("--skip-held", action="store_true", help="skip tickers you already own")
     sub.add_parser("pnl", help="realized profit / loss summary")
     p = sub.add_parser("report", help="write the HTML P&L dashboard")
     p.add_argument("--out", default="reports/pnl_dashboard.html")
@@ -492,6 +549,8 @@ def main(argv: list[str] | None = None) -> int:
         return _tracking_command(args, settings)
     if args.cmd == "watch":
         return _watch_command(args, settings)
+    if args.cmd == "basket":
+        return _basket_command(args, settings, registry)
     if args.cmd == "ui":
         return _ui_command(args, settings, registry)
 
@@ -500,6 +559,17 @@ def main(argv: list[str] | None = None) -> int:
         hub, statuses = _attach_mcp(args, registry)
     try:
         return _dispatch(args, settings, registry, statuses)
+    except Exception as e:
+        from .brokers.base import BrokerError
+        from .market_data import MarketDataError
+
+        if isinstance(e, (MarketDataError, BrokerError)):
+            print(f"error: {e}", file=sys.stderr)
+            if isinstance(e, MarketDataError):
+                print("Check your internet connection / API key, or set MARKET_DATA=simulated to work offline.",
+                      file=sys.stderr)
+            return 3
+        raise
     finally:
         if hub:
             hub.close()
@@ -521,7 +591,12 @@ def _dispatch(args, settings: Settings, registry, statuses) -> int:
     elif args.cmd == "positions":
         _print(registry.get("get_positions").run(ctx))
     elif args.cmd == "quote":
-        _print(registry.get("get_quote").run(ctx, symbols=args.symbols))
+        out = registry.get("get_quote").run(ctx, symbols=args.symbols)
+        out["source"] = getattr(ctx.broker, "data_source", ctx.broker.name)
+        sources = getattr(getattr(ctx.broker, "data", None), "last_source", None)
+        if sources:
+            out["source_by_symbol"] = {s.upper(): sources.get(s.upper()) for s in args.symbols}
+        _print(out)
     elif args.cmd == "journal":
         _print(ctx.journal.tail(args.n))
     elif args.cmd == "ask":

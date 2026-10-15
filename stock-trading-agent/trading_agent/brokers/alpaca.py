@@ -158,6 +158,8 @@ class AlpacaBroker(Broker):
                           params={"timeframe": "1Day", "start": start, "limit": 10000, "adjustment": "all"})
         return [float(b["c"]) for b in (data.get("bars") or [])][-days:]
 
+    data_source = "Alpaca market data (your account's feed)"
+
     def is_market_open(self) -> bool:
         return bool(self._trading("GET", "/v2/clock").get("is_open"))
 

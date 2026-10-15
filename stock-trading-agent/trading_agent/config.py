@@ -54,6 +54,7 @@ class Settings:
     paper_state_file: str = "data/paper_account.json"
     journal_file: str = "data/trade_journal.jsonl"
     risk: RiskLimits = field(default_factory=RiskLimits)
+    market_data: str = "simulated"     # paper mode price source: simulated | yahoo | finnhub | alpaca (comma = fallback)
 
     @property
     def is_live(self) -> bool:
@@ -86,6 +87,7 @@ class Settings:
             paper_starting_cash=float(os.getenv("PAPER_STARTING_CASH", "100000")),
             paper_state_file=os.getenv("PAPER_STATE_FILE", "data/paper_account.json"),
             journal_file=os.getenv("JOURNAL_FILE", "data/trade_journal.jsonl"),
+            market_data=os.getenv("MARKET_DATA", "simulated"),
             risk=RiskLimits.load(),
         )
 

@@ -2,7 +2,7 @@
 
 Prices come from a deterministic, seeded random walk per symbol so runs are
 reproducible and the whole system works offline. Plug in a real
-``QuoteProvider`` (see ``brokers/alpaca.py``) to paper-trade on live prices.
+market data provider (``market_data.py``: Yahoo, Finnhub, Alpaca) to paper-trade on live prices.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ from ..models import (
 from ..options_math import black_scholes, years_to_expiry
 from .base import Broker, BrokerError
 
-QuoteProvider = Callable[[str], Quote]
+QuoteProvider = Callable[[str], Quote]   # legacy: plain function symbol -> Quote
 
 # Rough anchor prices so simulated quotes look plausible.
 _ANCHORS = {
@@ -93,13 +93,15 @@ class PaperBroker(Broker):
         self,
         starting_cash: float = 100_000.0,
         state_file: str | Path | None = None,
-        quote_provider: QuoteProvider | None = None,
+        quote_provider: "QuoteProvider | None" = None,
+        data=None,                       # market_data.Provider: live quotes + history
         market: SimulatedMarket | None = None,
         commission_per_contract: float = 0.65,
         options_level: int = 2,
     ):
         self.market = market or SimulatedMarket()
         self._external_quotes = quote_provider
+        self.data = data
         self.commission_per_contract = commission_per_contract
         self.state_file = Path(state_file) if state_file else None
         self.cash = starting_cash
@@ -117,6 +119,8 @@ class PaperBroker(Broker):
         symbol = symbol.upper()
         if len(symbol) >= 16 and symbol[-9] in "CP" and symbol[-8:].isdigit():
             return self._option_quote(OptionContract.from_occ(symbol))
+        if self.data is not None:
+            return self.data.quote(symbol)
         if self._external_quotes:
             return self._external_quotes(symbol)
         return self.market.quote(symbol)
@@ -150,7 +154,13 @@ class PaperBroker(Broker):
         return chain
 
     def get_history(self, symbol: str, days: int = 60) -> list[float]:
+        if self.data is not None:
+            return self.data.history(symbol.upper(), days)
         return self.market.history(symbol.upper(), days)
+
+    @property
+    def data_source(self) -> str:
+        return getattr(self.data, "description", "") or "Simulated prices (offline)"
 
     # --------------------------------------------------------------- account
     def _mark(self) -> None:
@@ -168,7 +178,10 @@ class PaperBroker(Broker):
             if p.asset_class == AssetClass.OPTION and p.qty < 0
             and OptionContract.from_occ(p.symbol).right == OptionRight.PUT
         )
-        return Account(self.cash, equity, max(self.cash - secured, 0.0),
+        # Open buy orders reserve cash, as at a real broker.
+        reserved = sum((o.limit_price or o.stop_price or 0) * o.qty * o.multiplier
+                       for o in self.orders.values() if o.status == OrderStatus.NEW and o.side == Side.BUY)
+        return Account(self.cash, equity, max(self.cash - secured - reserved, 0.0),
                        self.day_start_equity, self.options_level)
 
     def get_positions(self) -> list[Position]:

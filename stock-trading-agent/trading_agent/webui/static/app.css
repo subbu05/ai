@@ -100,7 +100,14 @@ button.chip[aria-pressed="true"]::before { content: "\2713"; }
 .chip.add { border-style: dashed; background: transparent; }
 
 .group { margin-top: 14px; }
-.group h3 { font-size: 13px; margin: 0 0 6px; color: var(--text-2); font-weight: 600; display: flex; gap: 8px; align-items: baseline; }
+.group h3 { font-size: 13px; margin: 0 0 6px; color: var(--text-2); font-weight: 600; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.group h3 .buyall { margin-left: auto; padding: 4px 10px; font-size: 12px; }
+#basketDialog { width: min(640px, calc(100vw - 32px)); }
+#basketForm { display: flex; flex-direction: column; gap: 10px; }
+#bkPreview table { font-size: 12px; }
+#bkPreview .ok::before { content: "\2713 "; color: var(--good); }
+#bkPreview .bad::before { content: "\2715 "; color: var(--critical); }
+.source { font-size: 11px; color: var(--muted); }
 .tablewrap { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
 th, td { padding: 8px; border-bottom: 1px solid var(--grid); text-align: right; white-space: nowrap; vertical-align: middle; }
