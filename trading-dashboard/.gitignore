@@ -1,0 +1,9 @@
+node_modules/
+dist/
+# local runtime data (widgets, orders, fills, positions)
+data/
+# broker credentials / local settings: never commit
+config/*.local.json
+.env
+.env.*
+*.tsbuildinfo

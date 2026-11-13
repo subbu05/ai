@@ -1,0 +1,47 @@
+import type { Account, BrokerInfo, Fill, Instrument, Order, OrderRequest, Position, PublicSettings, Quote, SymbolPnl, Widget, BrokerRef } from "./types";
+
+async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
+  const res = await fetch(url, {
+    method,
+    headers: body !== undefined ? { "content-type": "application/json" } : undefined,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  if (res.status === 204) return undefined as T;
+  const data = await res.json().catch(() => ({}));
+  // Rejected orders come back as 422 with the order in the body; let the caller show the reason.
+  if (!res.ok && !(res.status === 422 && data?.status === "rejected")) {
+    throw new Error(data?.error ?? `${res.status} ${res.statusText}`);
+  }
+  return data as T;
+}
+
+export interface Bootstrap {
+  broker: BrokerRef; provider: string; settings: PublicSettings; widgets: Widget[];
+  account: Account; positions: Position[]; orders: Order[]; instruments: Record<string, Instrument>;
+}
+
+export const api = {
+  bootstrap: () => req<Bootstrap>("GET", "/api/bootstrap"),
+
+  createWidget: (title: string, symbols: string[] = []) => req<Widget>("POST", "/api/widgets", { title, symbols }),
+  updateWidget: (id: string, patch: Partial<Widget>) => req<Widget>("PATCH", `/api/widgets/${id}`, patch),
+  deleteWidget: (id: string) => req<void>("DELETE", `/api/widgets/${id}`),
+  reorderWidgets: (ids: string[]) => req<Widget[]>("PUT", "/api/widgets/order", { ids }),
+
+  search: (q: string) => req<Instrument[]>("GET", `/api/instruments/search?q=${encodeURIComponent(q)}`),
+  instruments: (symbols: string[]) => req<Record<string, Instrument>>("GET", `/api/instruments?symbols=${symbols.join(",")}`),
+  quotes: (symbols: string[]) => req<Omit<Quote, "dir">[]>("GET", `/api/quotes?symbols=${symbols.join(",")}`),
+
+  account: () => req<Account>("GET", "/api/account"),
+  positions: () => req<Position[]>("GET", "/api/positions"),
+  orders: () => req<Order[]>("GET", "/api/orders"),
+  fills: (limit = 500) => req<Fill[]>("GET", `/api/fills?limit=${limit}`),
+  pnl: () => req<{ realizedPnl: number; bySymbol: SymbolPnl[] }>("GET", "/api/pnl"),
+  placeOrder: (o: OrderRequest) => req<Order>("POST", "/api/orders", o),
+  cancelOrder: (id: string) => req<Order>("DELETE", `/api/orders/${id}`),
+  resetPaper: (startingCash?: number) => req<Account>("POST", "/api/paper/reset", { startingCash }),
+
+  settings: () => req<{ settings: PublicSettings; brokers: BrokerInfo[]; credentials: Record<string, string[]>; active: string }>("GET", "/api/settings"),
+  updateSettings: (patch: { broker?: string; liveTradingEnabled?: boolean }) => req<{ settings: PublicSettings; active: string }>("PUT", "/api/settings", patch),
+  saveCredentials: (broker: string, fields: Record<string, string>) => req<{ credentials: Record<string, string[]> }>("PUT", `/api/credentials/${broker}`, { fields }),
+};

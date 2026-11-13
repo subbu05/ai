@@ -1,0 +1,69 @@
+import { useMemo } from "react";
+import { useApp, store, actions } from "../lib/store";
+import { getQuote, useQuotesVersion } from "../lib/quotes";
+import { fmtSignedUsd, fmtUsd, tone, fmtPct } from "../lib/format";
+
+/** Account summary bar. Re-computes live totals at most once per animation frame. */
+export function Header() {
+  const broker = useApp((s) => s.broker);
+  const provider = useApp((s) => s.provider);
+  const conn = useApp((s) => s.conn);
+  const account = useApp((s) => s.account);
+  const positions = useApp((s) => s.positions);
+  const v = useQuotesVersion();
+
+  const t = useMemo(() => {
+    let mv = 0, cost = 0, day = 0;
+    for (const p of positions) {
+      const q = getQuote(p.symbol);
+      const last = q?.last ?? p.avgCost;
+      mv += p.qty * last;
+      cost += p.qty * p.avgCost;
+      if (q) day += p.qty * (q.last - q.prevClose);
+    }
+    return { mv, cost, day, unrealized: mv - cost };
+  }, [positions, v]);
+
+  const equity = (account?.cash ?? 0) + t.mv;
+  const totalPnl = account ? equity - account.startingCash : 0;
+
+  return (
+    <header className="header">
+      <div className="brand">
+        <span className="logo">▲</span> Trading Dashboard
+        {broker && <span className={`badge ${broker.live ? "live" : "paper"}`}>{broker.live ? "LIVE" : "PAPER"} · {broker.name}</span>}
+        <span className={`conn ${conn}`} title={`Stream ${conn} · data: ${provider}`} />
+        {provider === "simulated" && <span className="badge muted-badge" title="Prices are simulated. Configure a real market data provider to see live prices.">simulated data</span>}
+      </div>
+
+      <div className="stats">
+        <Stat label="Equity" value={fmtUsd(equity)} />
+        <Stat label="Day P&L" value={fmtSignedUsd(t.day)} tone={tone(t.day)} />
+        <Stat label="Unrealized" value={fmtSignedUsd(t.unrealized)} tone={tone(t.unrealized)}
+          sub={t.cost ? fmtPct((t.unrealized / t.cost) * 100) : undefined} />
+        <Stat label="Realized" value={fmtSignedUsd(account?.realizedPnl)} tone={tone(account?.realizedPnl)} />
+        <Stat label="Total P&L" value={fmtSignedUsd(totalPnl)} tone={tone(totalPnl)}
+          sub={account ? fmtPct((totalPnl / account.startingCash) * 100) : undefined} />
+        <Stat label="Cash" value={fmtUsd(account?.cash)} />
+        <Stat label="Buying power" value={fmtUsd(account?.buyingPower)} />
+      </div>
+
+      <div className="header-actions">
+        <button className="btn primary" onClick={() => void actions.addWidget()}>+ Widget</button>
+        <button className="btn" onClick={() => store.set({ settingsOpen: true })} title="Settings">⚙ Settings</button>
+      </div>
+    </header>
+  );
+}
+
+function Stat({ label, value, tone: t, sub }: { label: string; value: string; tone?: string; sub?: string }) {
+  return (
+    <div className="stat">
+      <div className="stat-label">{label}</div>
+      <div className={`stat-value ${t ?? ""}`}>
+        {value}
+        {sub && <span className="stat-sub">{sub}</span>}
+      </div>
+    </div>
+  );
+}

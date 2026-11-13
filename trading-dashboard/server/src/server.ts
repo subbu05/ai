@@ -1,0 +1,316 @@
+import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
+import fastifyWebsocket from "@fastify/websocket";
+import fastifyStatic from "@fastify/static";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import type { WebSocket } from "ws";
+
+import { ROOT, dataDir, saveLocalSettings, saveCredentials, credentialStatus, type AppSettings, type BrokerId } from "./config.js";
+import { Storage } from "./storage.js";
+import { QuoteHub } from "./market/quoteHub.js";
+import { createMarketData } from "./market/index.js";
+import { lookup } from "./market/catalog.js";
+import type { MarketDataProvider } from "./market/provider.js";
+import { BrokerManager } from "./brokers/manager.js";
+import { BROKERS } from "./brokers/index.js";
+import { PaperBroker } from "./brokers/paper.js";
+import { WidgetStore } from "./widgets.js";
+import { realizedBySymbol } from "./pnl.js";
+import { HttpError, normalizeSymbol } from "./util.js";
+import type { Quote, OrderRequest } from "./types.js";
+
+export interface AppContext {
+  app: FastifyInstance;
+  hub: QuoteHub;
+  brokers: BrokerManager;
+  widgets: WidgetStore;
+  storage: Storage;
+  close: () => Promise<void>;
+}
+
+const MAX_WS_BUFFER = 1 << 20; // 1 MiB: beyond this a client is "slow"; we skip deltas and resync later
+
+/** Compact wire format for quotes: [symbol, last, bid, ask, prevClose, high, low, volume, ts] */
+const encodeQuote = (q: Quote): string =>
+  `[${JSON.stringify(q.symbol)},${q.last},${q.bid},${q.ask},${q.prevClose},${q.high},${q.low},${q.volume},${q.ts}]`;
+
+interface Client {
+  socket: WebSocket;
+  subs: Set<string>;
+  needsResync: boolean;
+}
+
+export async function buildApp(settings: AppSettings, opts: { provider?: MarketDataProvider; logger?: boolean } = {}): Promise<AppContext> {
+  const storage = new Storage(dataDir(settings));
+  const provider = opts.provider ?? createMarketData(settings);
+  const hub = new QuoteHub(provider, settings.marketData.flushMs);
+  const widgets = new WidgetStore(storage);
+  const brokers = new BrokerManager({ storage, hub, startingCash: settings.paper.startingCash });
+  const clients = new Set<Client>();
+  let clientSeq = 0;
+
+  const app = Fastify({ logger: opts.logger ? { level: "info" } : false, bodyLimit: 256 * 1024 });
+
+  // ---------------------------------------------------------------- local-only guard
+  // Blocks DNS-rebinding and cross-site requests from other web pages to this local server.
+  const loopback = ["127.0.0.1", "localhost", "[::1]", "::1"].includes(settings.host);
+  const hostOk = (h: string | undefined) => !!h && /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.test(h);
+  app.addHook("onRequest", async (req, reply) => {
+    if (!loopback) return; // user deliberately exposed the server
+    const origin = req.headers.origin;
+    if (!hostOk(req.headers.host) || (origin && !hostOk(origin.replace(/^https?:\/\//i, "")))) {
+      return reply.code(403).send({ error: "Forbidden: local requests only" });
+    }
+  });
+
+  app.setErrorHandler((err: Error & { statusCode?: number }, _req, reply) => {
+    const code = err instanceof HttpError ? err.statusCode : err.statusCode ?? 500;
+    if (code >= 500 && code !== 501) app.log.error(err);
+    reply.code(code).send({ error: err.message });
+  });
+
+  // ---------------------------------------------------------------- demand wiring
+  const syncWidgetDemand = () => hub.setDemand("widgets", widgets.allSymbols());
+  widgets.onChange(syncWidgetDemand);
+  syncWidgetDemand();
+
+  const broadcast = (msg: string) => {
+    for (const c of clients) if (c.socket.readyState === 1) c.socket.send(msg);
+  };
+
+  brokers.attach((b) => {
+    hub.setDemand("broker", b.watchedSymbols());
+    return [
+      b.on("order", (o) => {
+        hub.setDemand("broker", b.watchedSymbols());
+        broadcast(JSON.stringify({ t: "order", d: o }));
+      }),
+      b.on("portfolio", async () => {
+        hub.setDemand("broker", b.watchedSymbols());
+        try {
+          const [account, positions] = await Promise.all([b.account(), b.positions()]);
+          broadcast(JSON.stringify({ t: "pf", d: { account, positions } }));
+        } catch (err) {
+          app.log.error(err);
+        }
+      }),
+    ];
+  });
+  brokers.onSwitch((b) => broadcast(JSON.stringify({ t: "broker", d: { id: b.id, name: b.displayName, live: b.live } })));
+
+  try {
+    await brokers.use(settings.broker);
+  } catch (err) {
+    console.error(`Could not start broker "${settings.broker}": ${(err as Error).message}. Falling back to paper.`);
+    await brokers.use("paper");
+  }
+
+  // ---------------------------------------------------------------- quote fan-out
+  hub.onFlush((batch) => {
+    if (clients.size === 0) return;
+    // Encode each changed quote once, then assemble per-client frames from the fragments.
+    const frag = new Map<string, string>();
+    for (const q of batch) frag.set(q.symbol, encodeQuote(q));
+    for (const c of clients) {
+      if (c.socket.readyState !== 1) continue;
+      if (c.socket.bufferedAmount > MAX_WS_BUFFER) {
+        c.needsResync = true;
+        continue;
+      }
+      let parts: string[];
+      if (c.needsResync) {
+        c.needsResync = false;
+        parts = [...c.subs].map((s) => hub.get(s)).filter((q): q is Quote => !!q).map(encodeQuote);
+      } else {
+        parts = [];
+        for (const s of c.subs) {
+          const f = frag.get(s);
+          if (f) parts.push(f);
+        }
+      }
+      if (parts.length) c.socket.send(`{"t":"q","d":[${parts.join(",")}]}`);
+    }
+  });
+
+  await app.register(fastifyWebsocket, { options: { maxPayload: 64 * 1024, perMessageDeflate: false } });
+
+  app.get("/ws", { websocket: true }, (socket: WebSocket) => {
+    const id = `client:${++clientSeq}`;
+    const client: Client = { socket, subs: new Set(), needsResync: false };
+    clients.add(client);
+    const b = brokers.broker;
+    socket.send(JSON.stringify({ t: "hello", d: { provider: hub.providerName, broker: { id: b.id, name: b.displayName, live: b.live } } }));
+
+    socket.on("message", async (raw) => {
+      let msg: { t?: string; symbols?: unknown };
+      try {
+        msg = JSON.parse(raw.toString());
+      } catch {
+        return;
+      }
+      if (msg.t === "sub" && Array.isArray(msg.symbols)) {
+        const syms = msg.symbols.slice(0, 1000).map(normalizeSymbol).filter((s): s is string => !!s);
+        client.subs = new Set(syms);
+        hub.setDemand(id, syms);
+        // Immediately send a snapshot so new rows populate without waiting for a tick.
+        const snap = await hub.getMany(syms);
+        if (snap.length && socket.readyState === 1) socket.send(`{"t":"q","d":[${snap.map(encodeQuote).join(",")}]}`);
+      } else if (msg.t === "ping") {
+        socket.send('{"t":"pong"}');
+      }
+    });
+    socket.on("close", () => {
+      clients.delete(client);
+      hub.setDemand(id, []);
+    });
+  });
+
+  // ---------------------------------------------------------------- REST API
+  const parseSymbols = (raw: unknown): string[] =>
+    String(raw ?? "").split(",").map(normalizeSymbol).filter((s): s is string => !!s).slice(0, 500);
+
+  app.get("/api/health", async () => ({ ok: true, broker: brokers.broker.id, provider: hub.providerName }));
+
+  app.get("/api/bootstrap", async () => {
+    const b = brokers.broker;
+    const [account, positions, orders] = await Promise.all([b.account(), b.positions(), b.orders()]);
+    const syms = new Set([...widgets.allSymbols(), ...positions.map((p) => p.symbol), ...orders.map((o) => o.symbol)]);
+    return {
+      broker: { id: b.id, name: b.displayName, live: b.live },
+      provider: hub.providerName,
+      settings: publicSettings(settings),
+      widgets: widgets.list(),
+      account,
+      positions,
+      orders: orders.slice(0, 200),
+      instruments: Object.fromEntries([...syms].map((s) => [s, lookup(s)])),
+    };
+  });
+
+  // widgets
+  app.get("/api/widgets", async () => widgets.list());
+  app.post<{ Body: { title?: string; symbols?: string[] } }>("/api/widgets", async (req, reply) => {
+    reply.code(201);
+    return widgets.create(req.body ?? {});
+  });
+  app.patch<{ Params: { id: string }; Body: Record<string, unknown> }>("/api/widgets/:id", async (req) =>
+    widgets.update(req.params.id, req.body ?? {}));
+  app.delete<{ Params: { id: string } }>("/api/widgets/:id", async (req, reply) => {
+    widgets.remove(req.params.id);
+    reply.code(204);
+  });
+  app.put<{ Body: { ids?: string[] } }>("/api/widgets/order", async (req) => widgets.reorder(req.body?.ids));
+
+  // market data
+  app.get<{ Querystring: { symbols?: string } }>("/api/quotes", async (req) => hub.getMany(parseSymbols(req.query.symbols)));
+  app.get<{ Querystring: { symbols?: string } }>("/api/instruments", async (req) =>
+    Object.fromEntries(parseSymbols(req.query.symbols).map((s) => [s, lookup(s)])));
+  app.get<{ Querystring: { q?: string } }>("/api/instruments/search", async (req) => {
+    const q = String(req.query.q ?? "").slice(0, 32);
+    const results = await provider.search(q);
+    // Any well-formed ticker can be added, even if the provider doesn't know its name.
+    const exact = normalizeSymbol(q);
+    if (exact && !results.some((r) => r.symbol === exact)) results.push(lookup(exact));
+    return results;
+  });
+
+  // trading
+  app.get("/api/account", async () => brokers.broker.account());
+  app.get("/api/positions", async () => brokers.broker.positions());
+  app.get("/api/orders", async () => brokers.broker.orders());
+  app.get<{ Querystring: { limit?: string } }>("/api/fills", async (req) =>
+    brokers.broker.fills(Math.min(5000, Number(req.query.limit) || 500)));
+  app.get("/api/pnl", async () => {
+    const b = brokers.broker;
+    const [account, fills] = await Promise.all([b.account(), b.fills(100_000)]);
+    return { realizedPnl: account.realizedPnl, bySymbol: realizedBySymbol(fills) };
+  });
+
+  app.post<{ Body: OrderRequest }>("/api/orders", async (req, reply) => {
+    const b = brokers.broker;
+    if (b.live && !settings.liveTradingEnabled) {
+      throw new HttpError(403, "Live trading is disabled. Enable it in Settings before sending real orders.");
+    }
+    if (!req.body || typeof req.body !== "object") throw new HttpError(400, "Order body required");
+    const order = await b.placeOrder(req.body);
+    reply.code(order.status === "rejected" ? 422 : 201);
+    return order;
+  });
+  app.delete<{ Params: { id: string } }>("/api/orders/:id", async (req) => brokers.broker.cancelOrder(req.params.id));
+
+  app.post<{ Body: { startingCash?: number } }>("/api/paper/reset", async (req) => {
+    const b = brokers.broker;
+    if (!(b instanceof PaperBroker)) throw new HttpError(400, "Reset is only available for the paper broker");
+    const cash = req.body?.startingCash;
+    if (cash !== undefined && !(Number(cash) > 0)) throw new HttpError(400, "startingCash must be > 0");
+    b.reset(cash !== undefined ? Number(cash) : undefined);
+    return b.account();
+  });
+
+  // settings
+  app.get("/api/settings", async () => ({
+    settings: publicSettings(settings),
+    brokers: BROKERS,
+    credentials: credentialStatus(),
+    active: brokers.broker.id,
+  }));
+
+  app.put<{ Body: { broker?: BrokerId; liveTradingEnabled?: boolean } }>("/api/settings", async (req) => {
+    const body = req.body ?? {};
+    if (body.broker !== undefined) {
+      if (!BROKERS.some((b) => b.id === body.broker)) throw new HttpError(400, "Unknown broker");
+      await brokers.use(body.broker); // throws (and keeps the old broker) if it can't connect
+      settings.broker = body.broker;
+      saveLocalSettings({ broker: body.broker });
+    }
+    if (body.liveTradingEnabled !== undefined) {
+      settings.liveTradingEnabled = !!body.liveTradingEnabled;
+      saveLocalSettings({ liveTradingEnabled: settings.liveTradingEnabled });
+    }
+    return { settings: publicSettings(settings), active: brokers.broker.id };
+  });
+
+  app.put<{ Params: { broker: string }; Body: { fields?: Record<string, unknown> } }>("/api/credentials/:broker", async (req) => {
+    const info = BROKERS.find((b) => b.id === req.params.broker);
+    if (!info) throw new HttpError(404, "Unknown broker");
+    const allowed = new Set(info.fields.map((f) => f.key));
+    const fields: Record<string, string> = {};
+    for (const [k, v] of Object.entries(req.body?.fields ?? {})) {
+      if (!allowed.has(k)) throw new HttpError(400, `Unknown field: ${k}`);
+      if (typeof v !== "string" || v.length > 4096) throw new HttpError(400, `Invalid value for ${k}`);
+      fields[k] = v.trim();
+    }
+    saveCredentials(info.id, fields);
+    return { credentials: credentialStatus() };
+  });
+
+  // ---------------------------------------------------------------- static web build
+  const webDist = join(ROOT, "web", "dist");
+  if (existsSync(webDist)) {
+    await app.register(fastifyStatic, { root: webDist, maxAge: "1h", immutable: false });
+    app.setNotFoundHandler((req: FastifyRequest, reply) => {
+      if (req.url.startsWith("/api/")) return reply.code(404).send({ error: "Not found" });
+      return reply.sendFile("index.html", { maxAge: 0 });
+    });
+  }
+
+  hub.start();
+
+  const close = async () => {
+    hub.stop();
+    await app.close();
+    await brokers.broker.dispose();
+    storage.flushAll();
+  };
+
+  return { app, hub, brokers, widgets, storage, close };
+}
+
+function publicSettings(s: AppSettings) {
+  return {
+    broker: s.broker,
+    liveTradingEnabled: s.liveTradingEnabled,
+    marketData: { provider: s.marketData.provider, tickMs: s.marketData.tickMs, flushMs: s.marketData.flushMs },
+    paper: s.paper,
+  };
+}
