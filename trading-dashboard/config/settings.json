@@ -12,5 +12,11 @@
   },
   "paper": {
     "startingCash": 100000
+  },
+  "profitGuard": {
+    "enabled": true,
+    "dropPct": 5,
+    "floorPct": 0.25,
+    "disabledSymbols": []
   }
 }

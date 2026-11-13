@@ -73,7 +73,8 @@ export class PaperBroker extends Emitter implements Broker {
   }
 
   async positions(): Promise<Position[]> {
-    return Object.values(this.positionsFile.get());
+    // Copies: callers must not be able to mutate (or see later mutations of) broker state.
+    return Object.values(this.positionsFile.get()).map((p) => ({ ...p }));
   }
 
   async orders(): Promise<Order[]> {
@@ -110,6 +111,7 @@ export class PaperBroker extends Emitter implements Broker {
       id: newId("ord"), symbol, side: req.side, qty, type: req.type, limitPrice, stopPrice,
       tif: req.tif === "gtc" ? "gtc" : "day", status: "open", filledQty: 0,
       createdAt: now, updatedAt: now, broker: this.id,
+      source: req.source === "profit-guard" || req.source === "kill-switch" ? req.source : "manual",
     };
 
     const problem = this.checkFunds(order, quote);

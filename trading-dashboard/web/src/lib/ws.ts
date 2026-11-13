@@ -1,4 +1,4 @@
-import { store, setPortfolio, upsertOrder, actions } from "./store";
+import { store, setPortfolio, upsertOrder, actions, toast } from "./store";
 import { ingestRows } from "./quotes";
 
 /**
@@ -53,6 +53,15 @@ export function connect(): void {
         break;
       case "pf":
         setPortfolio(msg.d.account, msg.d.positions);
+        break;
+      case "guard":
+        toast(`🛡 ${msg.d.message}`, msg.d.action === "sell" ? "ok" : "err");
+        break;
+      case "settings":
+        store.set({ settings: msg.d });
+        break;
+      case "kill":
+        void actions.refreshTrading();
         break;
       case "broker":
         void actions.bootstrap();

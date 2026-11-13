@@ -5,12 +5,14 @@ import { BottomPanel } from "./components/BottomPanel";
 import { OrderTicket } from "./components/OrderTicket";
 import { SettingsModal } from "./components/SettingsModal";
 import { Toasts } from "./components/Toasts";
+import { KillSwitchDialog } from "./components/KillSwitchDialog";
 
 export function App() {
   const ready = useApp((s) => s.ready);
   const error = useApp((s) => s.error);
   const hasTicket = useApp((s) => s.ticket !== null);
   const settingsOpen = useApp((s) => s.settingsOpen);
+  const kill = useApp((s) => s.kill !== null);
 
   if (!ready) {
     return (
@@ -37,6 +39,7 @@ export function App() {
       </main>
       {hasTicket && <OrderTicket />}
       {settingsOpen && <SettingsModal />}
+      {kill && <KillSwitchDialog />}
       <Toasts />
     </div>
   );

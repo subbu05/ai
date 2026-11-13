@@ -41,7 +41,8 @@ function OrderRow({ o }: { o: Order }) {
   return (
     <tr className={o.status}>
       <td className="l muted">{fmtDateTime(o.createdAt)}</td>
-      <td className="l sym"><span className="sym-text">{o.symbol}</span></td>
+      <td className="l sym"><span className="sym-text">{o.symbol}</span>{o.source === "profit-guard" && <span className="auto" title="Sold automatically by profit protection">🛡 auto</span>}
+        {o.source === "kill-switch" && <span className="auto killed" title="Sold by the kill switch">⛔ kill</span>}</td>
       <td className={`l ${o.side === "buy" ? "up" : "down"}`}>{o.side.toUpperCase()}</td>
       <td className="l">{o.type.replace("_", " ")}{o.tif === "gtc" ? " · GTC" : ""}{o.triggered && o.status === "open" ? " (triggered)" : ""}</td>
       <td className="num">{fmtQty(o.qty)}</td>

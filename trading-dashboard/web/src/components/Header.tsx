@@ -10,6 +10,7 @@ export function Header() {
   const conn = useApp((s) => s.conn);
   const account = useApp((s) => s.account);
   const positions = useApp((s) => s.positions);
+  const guard = useApp((s) => s.settings?.profitGuard);
   const v = useQuotesVersion();
 
   const t = useMemo(() => {
@@ -49,6 +50,22 @@ export function Header() {
       </div>
 
       <div className="header-actions">
+        {guard && (
+          <button
+            className={`master-toggle ${guard.enabled ? "on" : "off"}`}
+            role="switch"
+            aria-checked={guard.enabled}
+            onClick={() => void actions.setKillSwitch(!guard.enabled)}
+            title={guard.enabled
+              ? `Kill switch ON: any position that has been in profit today is sold if it falls ${guard.dropPct}% from today's high, never below cost + ${guard.floorPct}%. Click to turn off.`
+              : "Kill switch OFF: nothing is sold automatically. Click to turn on."}
+          >
+            <span className="knob" />
+            🛡 Kill switch {guard.enabled ? `ON · ${guard.dropPct}%` : "OFF"}
+          </button>
+        )}
+        <button className="btn kill" disabled={!positions.length} onClick={() => store.set({ kill: "all" })}
+          title="Cancel all open orders and sell every position at market right now">⛔ Sell all now</button>
         <button className="btn primary" onClick={() => void actions.addWidget()}>+ Widget</button>
         <button className="btn" onClick={() => store.set({ settingsOpen: true })} title="Settings">⚙ Settings</button>
       </div>

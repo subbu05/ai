@@ -16,6 +16,8 @@ import { BROKERS } from "./brokers/index.js";
 import { PaperBroker } from "./brokers/paper.js";
 import { WidgetStore } from "./widgets.js";
 import { realizedBySymbol } from "./pnl.js";
+import { ProfitGuard } from "./protect.js";
+import { killSwitch } from "./killSwitch.js";
 import { HttpError, normalizeSymbol } from "./util.js";
 import type { Quote, OrderRequest } from "./types.js";
 
@@ -40,8 +42,9 @@ interface Client {
   needsResync: boolean;
 }
 
-export async function buildApp(settings: AppSettings, opts: { provider?: MarketDataProvider; logger?: boolean } = {}): Promise<AppContext> {
+export async function buildApp(settings: AppSettings, opts: { provider?: MarketDataProvider; logger?: boolean; persistSettings?: boolean } = {}): Promise<AppContext> {
   const storage = new Storage(dataDir(settings));
+  const persist = (patch: Partial<AppSettings>) => { if (opts.persistSettings !== false) saveLocalSettings(patch); };
   const provider = opts.provider ?? createMarketData(settings);
   const hub = new QuoteHub(provider, settings.marketData.flushMs);
   const widgets = new WidgetStore(storage);
@@ -78,8 +81,16 @@ export async function buildApp(settings: AppSettings, opts: { provider?: MarketD
     for (const c of clients) if (c.socket.readyState === 1) c.socket.send(msg);
   };
 
+  const guard = new ProfitGuard(storage, hub, () => settings.profitGuard, (b) => !b.live || settings.liveTradingEnabled);
+  guard.onEvent((e) => {
+    if (e.action !== "sell") app.log.warn(e.message);
+    broadcast(JSON.stringify({ t: "guard", d: e }));
+  });
+  const refreshGuard = (b: Parameters<typeof guard.refresh>[0]) => guard.refresh(b).catch((err) => app.log.error(err));
+
   brokers.attach((b) => {
     hub.setDemand("broker", b.watchedSymbols());
+    void refreshGuard(b);
     return [
       b.on("order", (o) => {
         hub.setDemand("broker", b.watchedSymbols());
@@ -87,6 +98,7 @@ export async function buildApp(settings: AppSettings, opts: { provider?: MarketD
       }),
       b.on("portfolio", async () => {
         hub.setDemand("broker", b.watchedSymbols());
+        await refreshGuard(b);
         try {
           const [account, positions] = await Promise.all([b.account(), b.positions()]);
           broadcast(JSON.stringify({ t: "pf", d: { account, positions } }));
@@ -236,6 +248,22 @@ export async function buildApp(settings: AppSettings, opts: { provider?: MarketD
     reply.code(order.status === "rejected" ? 422 : 201);
     return order;
   });
+  // Kill switch: cancel open orders and market-sell everything (or just `symbols`), right now.
+  const killLog = storage.log<unknown>("kill-switch.log.jsonl");
+  app.post<{ Body: { symbols?: unknown } }>("/api/kill-switch", async (req) => {
+    const b = brokers.broker;
+    if (b.live && !settings.liveTradingEnabled) {
+      throw new HttpError(403, "Live trading is disabled. Enable it in Settings before sending real orders.");
+    }
+    const raw = req.body?.symbols;
+    if (raw !== undefined && !Array.isArray(raw)) throw new HttpError(400, "symbols must be an array");
+    const symbols = raw?.map(normalizeSymbol).filter((s): s is string => !!s);
+    const report = await killSwitch(b, hub, symbols);
+    killLog.append(report);
+    broadcast(JSON.stringify({ t: "kill", d: report }));
+    return report;
+  });
+
   app.delete<{ Params: { id: string } }>("/api/orders/:id", async (req) => brokers.broker.cancelOrder(req.params.id));
 
   app.post<{ Body: { startingCash?: number } }>("/api/paper/reset", async (req) => {
@@ -255,17 +283,54 @@ export async function buildApp(settings: AppSettings, opts: { provider?: MarketD
     active: brokers.broker.id,
   }));
 
-  app.put<{ Body: { broker?: BrokerId; liveTradingEnabled?: boolean } }>("/api/settings", async (req) => {
+  app.get("/api/profit-guard", async () => ({
+    settings: settings.profitGuard,
+    positions: guard.status(),
+    events: guard.recent(50),
+  }));
+
+  // Per-ticker kill-switch toggle.
+  app.put<{ Params: { symbol: string }; Body: { enabled?: unknown } }>("/api/profit-guard/symbols/:symbol", async (req) => {
+    const sym = normalizeSymbol(req.params.symbol);
+    if (!sym) throw new HttpError(400, "Invalid symbol");
+    if (typeof req.body?.enabled !== "boolean") throw new HttpError(400, "enabled must be true or false");
+    const off = new Set(settings.profitGuard.disabledSymbols);
+    if (req.body.enabled) off.delete(sym);
+    else off.add(sym);
+    settings.profitGuard = { ...settings.profitGuard, disabledSymbols: [...off].sort() };
+    persist({ profitGuard: settings.profitGuard });
+    broadcast(JSON.stringify({ t: "settings", d: publicSettings(settings) }));
+    return settings.profitGuard;
+  });
+
+  app.put<{ Body: { broker?: BrokerId; liveTradingEnabled?: boolean; profitGuard?: { enabled?: unknown; dropPct?: unknown; floorPct?: unknown } } }>("/api/settings", async (req) => {
     const body = req.body ?? {};
+    if (body.profitGuard !== undefined) {
+      const pg = { ...settings.profitGuard };
+      if (body.profitGuard.enabled !== undefined) pg.enabled = !!body.profitGuard.enabled;
+      if (body.profitGuard.dropPct !== undefined) {
+        const d = Number(body.profitGuard.dropPct);
+        if (!(d >= 0.5 && d <= 50)) throw new HttpError(400, "dropPct must be between 0.5 and 50");
+        pg.dropPct = d;
+      }
+      if (body.profitGuard.floorPct !== undefined) {
+        const f = Number(body.profitGuard.floorPct);
+        if (!(f >= 0 && f <= 5)) throw new HttpError(400, "floorPct must be between 0 and 5");
+        pg.floorPct = f;
+      }
+      settings.profitGuard = pg;
+      persist({ profitGuard: pg });
+      broadcast(JSON.stringify({ t: "settings", d: publicSettings(settings) }));
+    }
     if (body.broker !== undefined) {
       if (!BROKERS.some((b) => b.id === body.broker)) throw new HttpError(400, "Unknown broker");
       await brokers.use(body.broker); // throws (and keeps the old broker) if it can't connect
       settings.broker = body.broker;
-      saveLocalSettings({ broker: body.broker });
+      persist({ broker: body.broker });
     }
     if (body.liveTradingEnabled !== undefined) {
       settings.liveTradingEnabled = !!body.liveTradingEnabled;
-      saveLocalSettings({ liveTradingEnabled: settings.liveTradingEnabled });
+      persist({ liveTradingEnabled: settings.liveTradingEnabled });
     }
     return { settings: publicSettings(settings), active: brokers.broker.id };
   });
@@ -312,5 +377,6 @@ function publicSettings(s: AppSettings) {
     liveTradingEnabled: s.liveTradingEnabled,
     marketData: { provider: s.marketData.provider, tickMs: s.marketData.tickMs, flushMs: s.marketData.flushMs },
     paper: s.paper,
+    profitGuard: s.profitGuard,
   };
 }

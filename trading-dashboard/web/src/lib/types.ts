@@ -23,7 +23,7 @@ export interface Order {
   id: string; symbol: string; side: Side; qty: number; type: OrderType;
   limitPrice?: number; stopPrice?: number; tif: TimeInForce; status: OrderStatus;
   filledQty: number; avgFillPrice?: number; triggered?: boolean; reason?: string;
-  createdAt: number; updatedAt: number; broker: string;
+  createdAt: number; updatedAt: number; broker: string; source?: "manual" | "profit-guard" | "kill-switch";
 }
 
 export interface Fill { id: string; orderId: string; symbol: string; side: Side; qty: number; price: number; ts: number; realizedPnl: number }
@@ -44,7 +44,14 @@ export interface PublicSettings {
   broker: string; liveTradingEnabled: boolean;
   marketData: { provider: string; tickMs: number; flushMs: number };
   paper: { startingCash: number };
+  profitGuard: { enabled: boolean; dropPct: number; floorPct: number; disabledSymbols: string[] };
 }
+
+export interface ExitResult { symbol: string; qty: number; status: "filled" | "open" | "rejected" | "error"; price?: number; pnl?: number; message?: string }
+export interface KillSwitchReport { ts: number; scope: "all" | string[]; cancelledOrders: number; results: ExitResult[]; realizedPnl: number }
+
+export interface GuardStatus { symbol: string; avgCost: number; peak: number; armed: boolean; triggerPrice: number | null; triggered: boolean; enabled: boolean }
+export interface GuardEvent { ts: number; symbol: string; action: "sell" | "skipped" | "error"; qty?: number; price?: number; peak?: number; triggerPrice?: number; message: string }
 
 export interface SymbolPnl {
   symbol: string; realizedPnl: number; boughtQty: number; soldQty: number;

@@ -103,10 +103,11 @@ export const WidgetCard = memo(function WidgetCard({ widget }: { widget: Widget 
                 <thead>
                   <tr>
                     <th className="l">Symbol</th>
+                    <th title="Your average purchase price">Paid</th>
                     <th>Last</th>
-                    <th>Chg</th>
-                    <th>Chg %</th>
-                    <th className="hide-sm">Bid × Ask</th>
+                    <th>Day chg</th>
+                    <th title="Realized + unrealized P&L for this ticker">Total P&L</th>
+                    <th className="hide-narrow">Bid × Ask</th>
                     <th className="c">Trade</th>
                     <th />
                   </tr>

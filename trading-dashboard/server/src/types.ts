@@ -32,6 +32,8 @@ export interface OrderRequest {
   limitPrice?: number;
   stopPrice?: number;
   tif?: TimeInForce;
+  /** Who created the order: the user, or an automation such as the profit guard. */
+  source?: "manual" | "profit-guard" | "kill-switch";
 }
 
 export interface Order extends Required<Pick<OrderRequest, "symbol" | "side" | "qty" | "type">> {
@@ -47,6 +49,7 @@ export interface Order extends Required<Pick<OrderRequest, "symbol" | "side" | "
   createdAt: number;
   updatedAt: number;
   broker: string;
+  source?: "manual" | "profit-guard" | "kill-switch";
 }
 
 export interface Fill {
