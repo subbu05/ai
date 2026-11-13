@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useApp, store, actions } from "../lib/store";
 import { getQuote, useQuotesVersion } from "../lib/quotes";
+import { markPrice, mult } from "../lib/options";
 import { fmtSignedUsd, fmtUsd, tone, fmtPct } from "../lib/format";
 
 /** Account summary bar. Re-computes live totals at most once per animation frame. */
@@ -10,16 +11,18 @@ export function Header() {
   const conn = useApp((s) => s.conn);
   const account = useApp((s) => s.account);
   const positions = useApp((s) => s.positions);
+  const guard = useApp((s) => s.settings?.profitGuard);
   const v = useQuotesVersion();
 
   const t = useMemo(() => {
     let mv = 0, cost = 0, day = 0;
     for (const p of positions) {
       const q = getQuote(p.symbol);
-      const last = q?.last ?? p.avgCost;
-      mv += p.qty * last;
-      cost += p.qty * p.avgCost;
-      if (q) day += p.qty * (q.last - q.prevClose);
+      const m = mult(p.symbol);
+      const mark = markPrice(q, p.symbol) ?? p.avgCost;
+      mv += p.qty * mark * m;
+      cost += p.qty * p.avgCost * m;
+      if (q) day += p.qty * (mark - q.prevClose) * m;
     }
     return { mv, cost, day, unrealized: mv - cost };
   }, [positions, v]);
@@ -49,7 +52,24 @@ export function Header() {
       </div>
 
       <div className="header-actions">
-        <button className="btn primary" onClick={() => void actions.addWidget()}>+ Widget</button>
+        {guard && (
+          <button
+            className={`master-toggle ${guard.enabled ? "on" : "off"}`}
+            role="switch"
+            aria-checked={guard.enabled}
+            onClick={() => void actions.setKillSwitch(!guard.enabled)}
+            title={guard.enabled
+              ? `Kill switch ON: any position that has been in profit today is sold if it falls ${guard.dropPct}% from today's high, never below cost + ${guard.floorPct}%. Click to turn off.`
+              : "Kill switch OFF: nothing is sold automatically. Click to turn on."}
+          >
+            <span className="knob" />
+            🛡 Kill switch {guard.enabled ? `ON · ${guard.dropPct}%` : "OFF"}
+          </button>
+        )}
+        <button className="btn kill" disabled={!positions.length} onClick={() => store.set({ kill: "all" })}
+          title="Cancel all open orders and sell every position at market right now">⛔ Sell all now</button>
+        <button className="btn primary" onClick={() => void actions.addWidget()} title="Add a watchlist of stocks / ETFs">+ Widget</button>
+        <button className="btn" onClick={() => void actions.addOptionsWidget()} title="Add an option chain widget (calls, puts, Greeks)">+ Options</button>
         <button className="btn" onClick={() => store.set({ settingsOpen: true })} title="Settings">⚙ Settings</button>
       </div>
     </header>

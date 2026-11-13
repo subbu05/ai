@@ -4,6 +4,7 @@ import { Emitter } from "./broker.js";
 import type { QuoteHub } from "../market/quoteHub.js";
 import type { JsonFile, JsonlLog, Storage } from "../storage.js";
 import { HttpError, newId, normalizeSymbol, round2, round6 } from "../util.js";
+import { expiryTime, multiplier, parseOcc } from "../options/occ.js";
 
 interface PaperState {
   cash: number;
@@ -22,6 +23,9 @@ const MAX_CLOSED_ORDERS = 500;
  * - stop / stop_limit: trigger when last crosses the stop, then behave as market / limit.
  * - Long-only: sells can't exceed shares held minus shares already committed to open sells.
  * - Buys can't exceed buying power (cash minus cash reserved by open buy orders).
+ * - Options (OCC symbols): whole contracts only, prices are per share, cash moves ×100.
+ *   Long only (buy to open, sell to close). At expiration, positions are cash-settled at
+ *   intrinsic value (in the money) or expire worthless.
  *
  * Open orders are indexed by symbol, so each tick only checks orders for that symbol.
  * State is persisted to data/paper/*.json; every fill is appended to data/paper/fills.jsonl.
@@ -38,6 +42,7 @@ export class PaperBroker extends Emitter implements Broker {
   private fillsCache: Fill[];
   private openBySymbol = new Map<string, Set<Order>>();
   private unsubscribe: (() => void) | null = null;
+  private expiryTimer: NodeJS.Timeout | null = null;
 
   constructor(storage: Storage, private hub: QuoteHub, startingCash: number) {
     super();
@@ -55,10 +60,52 @@ export class PaperBroker extends Emitter implements Broker {
   async init(): Promise<void> {
     for (const o of this.ordersFile.get()) if (o.status === "open") this.index(o);
     this.unsubscribe = this.hub.onTick((q) => this.onQuote(q));
+    await this.settleExpired();
+    this.expiryTimer = setInterval(() => void this.settleExpired(), 60_000);
+    this.expiryTimer.unref?.();
   }
 
   async dispose(): Promise<void> {
     this.unsubscribe?.();
+    if (this.expiryTimer) clearInterval(this.expiryTimer);
+  }
+
+  /**
+   * Cash-settle option positions whose expiration has passed: in-the-money contracts pay
+   * intrinsic value (from the underlying's last price), others expire worthless.
+   * Open orders on expired contracts are cancelled.
+   */
+  async settleExpired(now = Date.now()): Promise<number> {
+    const expired = Object.values(this.positionsFile.get()).filter((p) => {
+      const c = parseOcc(p.symbol);
+      return c && expiryTime(c.expiry) <= now;
+    });
+    for (const o of this.ordersFile.get()) {
+      const c = o.status === "open" ? parseOcc(o.symbol) : null;
+      if (c && expiryTime(c.expiry) <= now) {
+        o.status = "cancelled";
+        o.reason = "Contract expired";
+        o.updatedAt = now;
+        this.unindex(o);
+        this.ordersFile.touch();
+        this.emit("order", o);
+      }
+    }
+    for (const p of expired) {
+      const c = parseOcc(p.symbol)!;
+      const [und] = await this.hub.getMany([c.underlying]);
+      if (!und) continue;
+      const intrinsic = round2(Math.max(0, c.right === "C" ? und.last - c.strike : c.strike - und.last));
+      const order: Order = {
+        id: newId("ord"), symbol: p.symbol, side: "sell", qty: p.qty, type: "market", tif: "day",
+        status: "open", filledQty: 0, createdAt: now, updatedAt: now, broker: this.id, source: "expiry",
+        reason: intrinsic > 0 ? `Expired in the money: settled at intrinsic ${intrinsic}` : "Expired worthless",
+      };
+      this.record(order);
+      this.execute(order, intrinsic);
+    }
+    if (expired.length) this.emit("portfolio");
+    return expired.length;
   }
 
   async account(): Promise<Account> {
@@ -73,7 +120,8 @@ export class PaperBroker extends Emitter implements Broker {
   }
 
   async positions(): Promise<Position[]> {
-    return Object.values(this.positionsFile.get());
+    // Copies: callers must not be able to mutate (or see later mutations of) broker state.
+    return Object.values(this.positionsFile.get()).map((p) => ({ ...p }));
   }
 
   async orders(): Promise<Order[]> {
@@ -95,6 +143,11 @@ export class PaperBroker extends Emitter implements Broker {
     if (!ORDER_TYPES.has(req.type)) throw new HttpError(400, "Invalid order type");
     const qty = round6(Number(req.qty));
     if (!Number.isFinite(qty) || qty <= 0) throw new HttpError(400, "Quantity must be greater than 0");
+    const contract = parseOcc(symbol);
+    if (contract) {
+      if (!Number.isInteger(qty)) throw new HttpError(400, "Options trade in whole contracts");
+      if (expiryTime(contract.expiry) <= Date.now()) throw new HttpError(400, "This contract has expired");
+    }
     const needsLimit = req.type === "limit" || req.type === "stop_limit";
     const needsStop = req.type === "stop" || req.type === "stop_limit";
     const limitPrice = needsLimit ? round2(Number(req.limitPrice)) : undefined;
@@ -110,6 +163,7 @@ export class PaperBroker extends Emitter implements Broker {
       id: newId("ord"), symbol, side: req.side, qty, type: req.type, limitPrice, stopPrice,
       tif: req.tif === "gtc" ? "gtc" : "day", status: "open", filledQty: 0,
       createdAt: now, updatedAt: now, broker: this.id,
+      source: req.source === "profit-guard" || req.source === "kill-switch" ? req.source : "manual",
     };
 
     const problem = this.checkFunds(order, quote);
@@ -164,7 +218,7 @@ export class PaperBroker extends Emitter implements Broker {
       }
       return null;
     }
-    const cost = order.qty * this.reservePrice(order, quote);
+    const cost = order.qty * this.reservePrice(order, quote) * multiplier(order.symbol);
     const bp = this.state.get().cash - this.reservedCash();
     return cost > bp + 1e-9 ? `Insufficient buying power: need $${round2(cost)}, have $${round2(bp)}` : null;
   }
@@ -176,7 +230,7 @@ export class PaperBroker extends Emitter implements Broker {
   private reservedCash(): number {
     let sum = 0;
     for (const set of this.openBySymbol.values()) {
-      for (const o of set) if (o.side === "buy") sum += (o.qty - o.filledQty) * this.reservePrice(o);
+      for (const o of set) if (o.side === "buy") sum += (o.qty - o.filledQty) * this.reservePrice(o) * multiplier(o.symbol);
     }
     return sum;
   }
@@ -212,7 +266,7 @@ export class PaperBroker extends Emitter implements Broker {
     if (price === null) return;
 
     // Funds can change between placement and a later fill (e.g. stop orders reserve at stop price).
-    if (o.side === "buy" && o.qty * price > this.state.get().cash + 1e-9) {
+    if (o.side === "buy" && o.qty * price * multiplier(o.symbol) > this.state.get().cash + 1e-9) {
       o.status = "rejected";
       o.reason = "Insufficient cash at fill time";
       o.updatedAt = Date.now();
@@ -229,11 +283,12 @@ export class PaperBroker extends Emitter implements Broker {
     const positions = this.positionsFile.get();
     const state = this.state.get();
     const qty = o.qty - o.filledQty;
+    const mult = multiplier(o.symbol);
     let realized = 0;
 
     const pos = positions[o.symbol];
     if (o.side === "buy") {
-      state.cash -= qty * price;
+      state.cash -= qty * price * mult;
       if (pos) {
         const newQty = round6(pos.qty + qty);
         pos.avgCost = (pos.qty * pos.avgCost + qty * price) / newQty;
@@ -243,8 +298,8 @@ export class PaperBroker extends Emitter implements Broker {
       }
     } else {
       // Long-only, so pos must exist (checked at placement).
-      realized = round2((price - pos!.avgCost) * qty);
-      state.cash += qty * price;
+      realized = round2((price - pos!.avgCost) * qty * mult);
+      state.cash += qty * price * mult;
       state.realizedPnl += realized;
       pos!.realizedPnl = round2(pos!.realizedPnl + realized);
       pos!.qty = round6(pos!.qty - qty);

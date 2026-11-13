@@ -1,4 +1,4 @@
-import { store, setPortfolio, upsertOrder, actions } from "./store";
+import { store, setPortfolio, upsertOrder, actions, toast } from "./store";
 import { ingestRows } from "./quotes";
 
 /**
@@ -16,6 +16,7 @@ function neededSymbols(): string[] {
   for (const p of s.positions) set.add(p.symbol);
   for (const o of s.orders) if (o.status === "open") set.add(o.symbol);
   if (s.ticket) set.add(s.ticket.symbol);
+  for (const list of Object.values(s.chainSubs)) for (const sym of list) set.add(sym);
   return [...set].sort();
 }
 
@@ -53,6 +54,15 @@ export function connect(): void {
         break;
       case "pf":
         setPortfolio(msg.d.account, msg.d.positions);
+        break;
+      case "guard":
+        toast(`🛡 ${msg.d.message}`, msg.d.action === "sell" ? "ok" : "err");
+        break;
+      case "settings":
+        store.set({ settings: msg.d });
+        break;
+      case "kill":
+        void actions.refreshTrading();
         break;
       case "broker":
         void actions.bootstrap();

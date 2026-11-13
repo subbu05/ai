@@ -1,3 +1,5 @@
+import { mult } from "../lib/options";
+import { displayName } from "../lib/store";
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import { useApp } from "../lib/store";
@@ -73,11 +75,11 @@ export function HistoryPanel() {
                   {fills.slice(0, 300).map((f) => (
                     <tr key={f.id}>
                       <td className="l muted">{fmtDateTime(f.ts)}</td>
-                      <td className="l sym"><span className="sym-text">{f.symbol}</span></td>
+                      <td className="l sym"><span className="sym-text">{displayName(f.symbol)}</span></td>
                       <td className={`l ${f.side === "buy" ? "up" : "down"}`}>{f.side.toUpperCase()}</td>
                       <td className="num">{fmtQty(f.qty)}</td>
                       <td className="num">{fmtPrice(f.price)}</td>
-                      <td className="num">{fmtUsd(f.qty * f.price)}</td>
+                      <td className="num">{fmtUsd(f.qty * f.price * mult(f.symbol))}</td>
                       <td className={`num ${tone(f.realizedPnl)}`}>{f.side === "sell" ? fmtSignedUsd(f.realizedPnl) : ""}</td>
                     </tr>
                   ))}

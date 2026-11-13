@@ -1,4 +1,4 @@
-import type { Account, BrokerInfo, Fill, Instrument, Order, OrderRequest, Position, PublicSettings, Quote, SymbolPnl, Widget, BrokerRef } from "./types";
+import type { OptionChain, Expiration, KillSwitchReport, GuardEvent, GuardStatus, Account, BrokerInfo, Fill, Instrument, Order, OrderRequest, Position, PublicSettings, Quote, SymbolPnl, Widget, BrokerRef } from "./types";
 
 async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
@@ -24,6 +24,10 @@ export const api = {
   bootstrap: () => req<Bootstrap>("GET", "/api/bootstrap"),
 
   createWidget: (title: string, symbols: string[] = []) => req<Widget>("POST", "/api/widgets", { title, symbols }),
+  createOptionsWidget: (underlying: string) => req<Widget>("POST", "/api/widgets", { kind: "options", options: { underlying } }),
+  optionChain: (underlying: string, expiry: string | undefined, strikes: number) =>
+    req<OptionChain>("GET", `/api/options/${encodeURIComponent(underlying)}/chain?strikes=${strikes}${expiry ? `&expiry=${expiry}` : ""}`),
+  expirations: (underlying: string) => req<{ underlying: string; expirations: Expiration[] }>("GET", `/api/options/${encodeURIComponent(underlying)}/expirations`),
   updateWidget: (id: string, patch: Partial<Widget>) => req<Widget>("PATCH", `/api/widgets/${id}`, patch),
   deleteWidget: (id: string) => req<void>("DELETE", `/api/widgets/${id}`),
   reorderWidgets: (ids: string[]) => req<Widget[]>("PUT", "/api/widgets/order", { ids }),
@@ -38,10 +42,13 @@ export const api = {
   fills: (limit = 500) => req<Fill[]>("GET", `/api/fills?limit=${limit}`),
   pnl: () => req<{ realizedPnl: number; bySymbol: SymbolPnl[] }>("GET", "/api/pnl"),
   placeOrder: (o: OrderRequest) => req<Order>("POST", "/api/orders", o),
+  killSwitch: (symbols?: string[]) => req<KillSwitchReport>("POST", "/api/kill-switch", { symbols }),
   cancelOrder: (id: string) => req<Order>("DELETE", `/api/orders/${id}`),
   resetPaper: (startingCash?: number) => req<Account>("POST", "/api/paper/reset", { startingCash }),
 
   settings: () => req<{ settings: PublicSettings; brokers: BrokerInfo[]; credentials: Record<string, string[]>; active: string }>("GET", "/api/settings"),
-  updateSettings: (patch: { broker?: string; liveTradingEnabled?: boolean }) => req<{ settings: PublicSettings; active: string }>("PUT", "/api/settings", patch),
+  setKillSwitchFor: (symbol: string, enabled: boolean) => req<PublicSettings["profitGuard"]>("PUT", `/api/profit-guard/symbols/${encodeURIComponent(symbol)}`, { enabled }),
+  profitGuard: () => req<{ settings: PublicSettings["profitGuard"]; positions: GuardStatus[]; events: GuardEvent[] }>("GET", "/api/profit-guard"),
+  updateSettings: (patch: { broker?: string; liveTradingEnabled?: boolean; profitGuard?: Partial<PublicSettings["profitGuard"]> }) => req<{ settings: PublicSettings; active: string }>("PUT", "/api/settings", patch),
   saveCredentials: (broker: string, fields: Record<string, string>) => req<{ credentials: Record<string, string[]> }>("PUT", `/api/credentials/${broker}`, { fields }),
 };

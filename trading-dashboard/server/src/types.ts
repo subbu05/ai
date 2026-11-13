@@ -1,6 +1,6 @@
 // Shared domain types. The web client mirrors these in web/src/lib/types.ts.
 
-export type AssetType = "stock" | "etf";
+export type AssetType = "stock" | "etf" | "option";
 export type Side = "buy" | "sell";
 export type OrderType = "market" | "limit" | "stop" | "stop_limit";
 export type TimeInForce = "day" | "gtc";
@@ -22,6 +22,21 @@ export interface Quote {
   low: number;
   volume: number;
   ts: number; // epoch ms
+  /** Options only: implied volatility (0.25 = 25%) and Greeks (theta per day, vega/rho per 1 point). */
+  greeks?: OptionGreeks;
+  /** Options only: open interest (contracts). */
+  oi?: number;
+  /** Options only: underlying price used for the Greeks. */
+  underlyingPrice?: number;
+}
+
+export interface OptionGreeks {
+  iv: number;
+  delta: number;
+  gamma: number;
+  theta: number;
+  vega: number;
+  rho: number;
 }
 
 export interface OrderRequest {
@@ -32,7 +47,11 @@ export interface OrderRequest {
   limitPrice?: number;
   stopPrice?: number;
   tif?: TimeInForce;
+  /** Who created the order: the user, or an automation such as the profit guard. */
+  source?: "manual" | "profit-guard" | "kill-switch";
 }
+
+export type OrderSource = "manual" | "profit-guard" | "kill-switch" | "expiry";
 
 export interface Order extends Required<Pick<OrderRequest, "symbol" | "side" | "qty" | "type">> {
   id: string;
@@ -47,6 +66,7 @@ export interface Order extends Required<Pick<OrderRequest, "symbol" | "side" | "
   createdAt: number;
   updatedAt: number;
   broker: string;
+  source?: OrderSource;
 }
 
 export interface Fill {
@@ -79,7 +99,20 @@ export interface Account {
 export interface Widget {
   id: string;
   title: string;
+  /** "quotes" (default): a watchlist of stocks/ETFs. "options": an option chain for one underlying. */
+  kind?: "quotes" | "options";
   symbols: string[];
   sort?: "manual" | "symbol" | "change" | "price";
   collapsed?: boolean;
+  options?: OptionsWidgetConfig;
+}
+
+export interface OptionsWidgetConfig {
+  underlying: string;
+  /** YYYY-MM-DD; missing or expired = nearest expiration. */
+  expiry?: string;
+  /** Strikes shown on each side of the money. */
+  strikes: number;
+  view: "both" | "calls" | "puts";
+  greeks: boolean;
 }

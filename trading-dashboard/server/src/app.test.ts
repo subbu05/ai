@@ -10,6 +10,7 @@ import type { AppSettings } from "./config.js";
 import type { MarketDataProvider } from "./market/provider.js";
 import type { Quote, Order } from "./types.js";
 import { search } from "./market/catalog.js";
+import { round2 } from "./util.js";
 
 /** Deterministic provider: prices only move when the test pushes them. */
 class FakeProvider implements MarketDataProvider {
@@ -39,6 +40,7 @@ const settings = (): AppSettings => ({
   host: "127.0.0.1", port: 0, dataDir: dir, broker: "paper", liveTradingEnabled: false,
   marketData: { provider: "fake", tickMs: 1000, volatility: 0, flushMs: 20 },
   paper: { startingCash: 10_000 },
+  profitGuard: { enabled: true, dropPct: 5, floorPct: 0.25, disabledSymbols: [] },
 });
 
 const call = async (method: string, url: string, body?: unknown) => {
@@ -49,7 +51,7 @@ const call = async (method: string, url: string, body?: unknown) => {
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "td-test-"));
   provider = new FakeProvider();
-  ctx = await buildApp(settings(), { provider });
+  ctx = await buildApp(settings(), { provider, persistSettings: false });
 });
 
 afterEach(async () => {
@@ -129,7 +131,7 @@ test("cancel releases reserved buying power", async () => {
 
 test("widgets CRUD persists to local files", async () => {
   const initial = (await call("GET", "/api/widgets")).body;
-  assert.equal(initial.length, 3);
+  assert.equal(initial.length, 4); // 3 watchlists + 1 options chain
 
   const w = (await call("POST", "/api/widgets", { title: "Mine", symbols: ["tsla", "TSLA", "voo"] })).body;
   assert.deepEqual(w.symbols, ["TSLA", "VOO"]);
@@ -145,7 +147,7 @@ test("widgets CRUD persists to local files", async () => {
   assert.equal(onDisk[0].title, "Renamed");
 
   assert.equal((await call("DELETE", `/api/widgets/${w.id}`)).status, 204);
-  assert.equal((await call("GET", "/api/widgets")).body.length, 3);
+  assert.equal((await call("GET", "/api/widgets")).body.length, 4);
 });
 
 test("state survives a restart", async () => {
@@ -154,7 +156,7 @@ test("state survives a restart", async () => {
   await ctx.close();
 
   provider = new FakeProvider();
-  ctx = await buildApp(settings(), { provider });
+  ctx = await buildApp(settings(), { provider, persistSettings: false });
   assert.equal((await call("GET", "/api/positions")).body[0].qty, 3);
   assert.equal((await call("GET", "/api/fills")).body.length, 1);
   provider.move("AAPL", 79);
@@ -198,4 +200,136 @@ test("websocket streams only subscribed symbols, batched", async () => {
   assert.equal(rows.length, 1);
   assert.equal(rows[0][0], "AAPL");
   assert.equal(rows[0][1], 102);
+});
+
+// ------------------------------------------------------------------ profit guard
+const settle = () => new Promise((r) => setTimeout(r, 30));
+
+test("profit guard sells after a 5% pullback from today's high", async () => {
+  await call("POST", "/api/orders", { symbol: "AAPL", side: "buy", qty: 10, type: "market" }); // cost 100.01
+  await settle();
+  provider.move("AAPL", 120); // in profit, peak 120 -> trigger 114
+  provider.move("AAPL", 114.5);
+  await settle();
+  let g = (await call("GET", "/api/profit-guard")).body;
+  assert.equal(g.positions[0].triggerPrice, 114);
+  assert.equal((await call("GET", "/api/positions")).body.length, 1);
+
+  provider.move("AAPL", 113.9);
+  await settle();
+  assert.equal((await call("GET", "/api/positions")).body.length, 0);
+  const sell = (await call("GET", "/api/orders")).body.find((o: Order) => o.side === "sell");
+  assert.equal(sell.source, "profit-guard");
+  assert.ok((await call("GET", "/api/account")).body.realizedPnl > 0);
+  g = (await call("GET", "/api/profit-guard")).body;
+  assert.equal(g.events[0].action, "sell");
+  assert.equal(g.events[0].qty, 10);
+  assert.match(g.events[0].message, /sold 10 AAPL/);
+});
+
+test("profit guard never lets a winner turn into a loss (break-even floor)", async () => {
+  await call("PUT", "/api/settings", { profitGuard: { dropPct: 50 } });
+  await call("POST", "/api/orders", { symbol: "AAPL", side: "buy", qty: 5, type: "market" }); // cost 100.01
+  await settle();
+  provider.move("AAPL", 104); // armed; 50% below peak is 52, so the floor (cost + 0.25% = 100.26) applies
+  provider.move("AAPL", 100.5); // bid 100.49: still above the floor
+  await settle();
+  assert.equal((await call("GET", "/api/positions")).body.length, 1);
+  provider.move("AAPL", 100.2); // bid 100.19 <= 100.26 -> sell, still above cost
+  await settle();
+  assert.equal((await call("GET", "/api/positions")).body.length, 0);
+  assert.ok((await call("GET", "/api/account")).body.realizedPnl > 0);
+});
+
+test("profit guard ignores positions that were never in profit, and can be disabled", async () => {
+  await call("POST", "/api/orders", { symbol: "AAPL", side: "buy", qty: 5, type: "market" });
+  await settle();
+  provider.move("AAPL", 95);
+  provider.move("AAPL", 80);
+  await settle();
+  assert.equal((await call("GET", "/api/positions")).body.length, 1);
+
+  await call("PUT", "/api/settings", { profitGuard: { enabled: false } });
+  provider.move("AAPL", 130);
+  provider.move("AAPL", 100);
+  await settle();
+  assert.equal((await call("GET", "/api/positions")).body.length, 1);
+
+  assert.equal((await call("PUT", "/api/settings", { profitGuard: { dropPct: 0 } })).status, 400);
+});
+
+test("profit guard frees shares held by a resting sell limit", async () => {
+  await call("POST", "/api/orders", { symbol: "AAPL", side: "buy", qty: 4, type: "market" });
+  await call("POST", "/api/orders", { symbol: "AAPL", side: "sell", qty: 4, type: "limit", limitPrice: 200 });
+  await settle();
+  provider.move("AAPL", 110);
+  provider.move("AAPL", 104);
+  await settle();
+  assert.equal((await call("GET", "/api/positions")).body.length, 0);
+  const statuses = (await call("GET", "/api/orders")).body.map((o: Order) => `${o.type}:${o.status}`);
+  assert.ok(statuses.includes("limit:cancelled"));
+});
+
+test("profit guard doesn't arm on a profit smaller than the cushion", async () => {
+  await call("POST", "/api/orders", { symbol: "AAPL", side: "buy", qty: 5, type: "market" }); // cost 100.01
+  await settle();
+  provider.move("AAPL", 100.2); // bid 100.19: a few cents up, below cost + 0.25%
+  provider.move("AAPL", 99);
+  await settle();
+  assert.equal((await call("GET", "/api/positions")).body.length, 1);
+  assert.equal((await call("GET", "/api/profit-guard")).body.positions[0].armed, false);
+});
+
+// ------------------------------------------------------------------ kill switch
+test("kill switch cancels open orders and sells every position at market", async () => {
+  await call("POST", "/api/orders", { symbol: "AAPL", side: "buy", qty: 10, type: "market" });
+  await call("POST", "/api/orders", { symbol: "SPY", side: "buy", qty: 2, type: "market" });
+  await call("POST", "/api/orders", { symbol: "AAPL", side: "sell", qty: 5, type: "limit", limitPrice: 999 });
+  await call("POST", "/api/orders", { symbol: "SPY", side: "buy", qty: 1, type: "limit", limitPrice: 1 });
+  provider.move("AAPL", 105);
+  provider.move("SPY", 490);
+
+  const r = (await call("POST", "/api/kill-switch", {})).body;
+  assert.equal(r.cancelledOrders, 2);
+  assert.equal(r.results.length, 2);
+  assert.ok(r.results.every((x: { status: string }) => x.status === "filled"));
+  const aapl = r.results.find((x: { symbol: string }) => x.symbol === "AAPL");
+  assert.equal(aapl.pnl, round2((104.99 - 100.01) * 10)); // profit locked in
+  const spy = r.results.find((x: { symbol: string }) => x.symbol === "SPY");
+  assert.ok(spy.pnl < 0); // loss stopped from growing
+  assert.equal((await call("GET", "/api/positions")).body.length, 0);
+  assert.equal((await call("GET", "/api/orders")).body.filter((o: Order) => o.status === "open").length, 0);
+});
+
+test("kill switch can target a single ticker", async () => {
+  await call("POST", "/api/orders", { symbol: "AAPL", side: "buy", qty: 1, type: "market" });
+  await call("POST", "/api/orders", { symbol: "SPY", side: "buy", qty: 1, type: "market" });
+  const r = (await call("POST", "/api/kill-switch", { symbols: ["aapl"] })).body;
+  assert.deepEqual(r.results.map((x: { symbol: string }) => x.symbol), ["AAPL"]);
+  const left = (await call("GET", "/api/positions")).body;
+  assert.deepEqual(left.map((p: { symbol: string }) => p.symbol), ["SPY"]);
+});
+
+test("kill switch can be switched off for one ticker and back on", async () => {
+  await call("POST", "/api/orders", { symbol: "AAPL", side: "buy", qty: 2, type: "market" });
+  await call("POST", "/api/orders", { symbol: "SPY", side: "buy", qty: 2, type: "market" });
+  assert.equal((await call("PUT", "/api/profit-guard/symbols/aapl", { enabled: false })).status, 200);
+  assert.equal((await call("PUT", "/api/profit-guard/symbols/AAPL", { enabled: "no" })).status, 400);
+  await settle();
+  provider.move("AAPL", 120);
+  provider.move("SPY", 520);
+  provider.move("AAPL", 100.5); // would trigger, but AAPL is switched off
+  provider.move("SPY", 500.5); // triggers (floor 500.01 * 1.0025 = 501.26)
+  await settle();
+  let held = (await call("GET", "/api/positions")).body.map((p: { symbol: string }) => p.symbol);
+  assert.deepEqual(held, ["AAPL"]);
+  const st = (await call("GET", "/api/profit-guard")).body.positions[0];
+  assert.equal(st.enabled, false);
+  assert.equal(st.peak, 120); // still tracked while off
+
+  await call("PUT", "/api/profit-guard/symbols/AAPL", { enabled: true });
+  provider.move("AAPL", 100.4);
+  await settle();
+  held = (await call("GET", "/api/positions")).body;
+  assert.equal(held.length, 0);
 });
