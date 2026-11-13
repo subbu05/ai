@@ -145,12 +145,24 @@ The Positions tab shows each position's toggle and current trigger price, or
 
 ## Security
 
-- The server binds to `127.0.0.1` only. It rejects requests whose `Host` isn't localhost
-  (to block DNS rebinding) and cross-origin requests (so other web pages can't place orders).
+- **Local only.** The server listens on `127.0.0.1`, so other machines can't reach it. It has
+  no login, so it **refuses to start** on a network address (e.g. `HOST=0.0.0.0`) unless you
+  force it with `TD_ALLOW_REMOTE=1`. Don't do that on a shared network.
+- **Other websites can't use it.** Requests are rejected if the `Host` isn't localhost (DNS
+  rebinding), if the `Origin` isn't the dashboard itself (even another app on localhost), or if
+  the browser marks them cross-site. This covers the WebSocket too.
+- **Browser hardening.** A strict Content-Security-Policy (only the dashboard's own scripts
+  run), no framing (so Buy/Sell can't be clickjacked), `nosniff`, no referrer, and API responses
+  are never cached.
+- **Private files.** `data/` is owner-only (`0700`), and orders, fills, positions,
+  `settings.local.json` and `credentials.local.json` are `0600`. Existing files are fixed on start.
+  The credentials and data files are git-ignored. Keys are stored in plain text, so protect your
+  computer account (disk encryption, screen lock).
 - Credentials never go back to the browser. The API only reports which fields are set.
 - Real-money brokers need **Settings → Safety → "Allow orders on real-money brokers"**. Until
   then, manual orders, the kill switch and profit protection all refuse to trade on a live
   broker. Each live order also needs an extra confirmation checkbox in the ticket.
+- Dependencies: `npm audit` reports 0 known vulnerabilities (server and web).
 
 ## API (for scripts / other tools)
 

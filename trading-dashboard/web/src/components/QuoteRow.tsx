@@ -32,11 +32,10 @@ export const QuoteRow = memo(function QuoteRow({ symbol, widgetId }: { symbol: s
         <span className="sym-text">{symbol}</span>
         {inst && <span className={`type ${inst.type}`}>{inst.type.toUpperCase()}</span>}
         {held ? <span className="held" title="Shares held">{fmtQty(held)}</span> : null}
-        {held ? <KillToggle symbol={symbol} /> : null}
         <div className="sym-name">{inst?.name !== symbol ? inst?.name : ""}</div>
       </td>
       <td className="num paid" title={pos ? `Your average purchase price for ${fmtQty(pos.qty)} shares` : "Not held"}>
-        {pos ? fmtPrice(pos.avgCost) : <span className="muted">—</span>}
+        {pos ? <>{fmtPrice(pos.avgCost)}<div className="sub muted">{fmtQty(pos.qty)} {mult(symbol) > 1 ? "ct" : "sh"}</div></> : <span className="muted">—</span>}
       </td>
       <td className={`num price ${flash}`}>
         {fmtPrice(q?.last)}
@@ -51,6 +50,7 @@ export const QuoteRow = memo(function QuoteRow({ symbol, widgetId }: { symbol: s
         {hasPnl ? <b>{fmtSignedUsd(total)}</b> : <span className="muted">—</span>}
       </td>
       <td className="num muted hide-narrow">{q ? `${fmtPrice(q.bid)} × ${fmtPrice(q.ask)}` : "—"}</td>
+      <td className="c guard-cell"><KillToggle symbol={symbol} /></td>
       <td className="c actions">
         <button className="btn buy sm" onClick={() => actions.openTicket(symbol, "buy")}>Buy</button>
         <button className="btn sell sm" onClick={() => actions.openTicket(symbol, "sell", held)} disabled={!held}>Sell</button>

@@ -9,8 +9,11 @@ export default defineConfig({
     host: "127.0.0.1",
     port: 5173,
     proxy: {
-      "/api": { target: api, changeOrigin: true },
-      "/ws": { target: api.replace("http", "ws"), ws: true, changeOrigin: true },
+      // The API only accepts requests whose Origin matches its own host, so present the
+      // dev page's requests as coming from the API's origin.
+      "/api": { target: api, changeOrigin: true, configure: (p) => p.on("proxyReq", (r) => r.setHeader("origin", api)) },
+      "/ws": { target: api.replace("http", "ws"), ws: true, changeOrigin: true,
+        configure: (p) => p.on("proxyReqWs", (r) => r.setHeader("origin", api)) },
     },
   },
   build: { target: "es2022", sourcemap: false },

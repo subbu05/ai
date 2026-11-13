@@ -1,4 +1,9 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync, appendFileSync, existsSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync, appendFileSync, existsSync, chmodSync } from "node:fs";
+
+// Trading data is private: directories 0700, files 0600 (owner only).
+const DIR_MODE = 0o700;
+const FILE_MODE = 0o600;
+const privateDir = (d: string) => { mkdirSync(d, { recursive: true, mode: DIR_MODE }); try { chmodSync(d, DIR_MODE); } catch { /* not owner */ } };
 import { dirname, join } from "node:path";
 
 /**
@@ -14,7 +19,8 @@ export class JsonFile<T> {
   private value: T;
 
   constructor(private path: string, fallback: T, private debounceMs = 150) {
-    mkdirSync(dirname(path), { recursive: true });
+    privateDir(dirname(path));
+    if (existsSync(path)) try { chmodSync(path, FILE_MODE); } catch { /* not owner */ }
     this.value = existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as T) : fallback;
   }
 
@@ -36,7 +42,7 @@ export class JsonFile<T> {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     const tmp = `${this.path}.${process.pid}.tmp`;
-    writeFileSync(tmp, JSON.stringify(this.value, null, 2));
+    writeFileSync(tmp, JSON.stringify(this.value, null, 2), { mode: FILE_MODE });
     renameSync(tmp, this.path);
   }
 
@@ -49,11 +55,12 @@ export class JsonFile<T> {
 
 export class JsonlLog<T> {
   constructor(private path: string) {
-    mkdirSync(dirname(path), { recursive: true });
+    privateDir(dirname(path));
+    if (existsSync(path)) try { chmodSync(path, FILE_MODE); } catch { /* not owner */ }
   }
 
   append(entry: T): void {
-    appendFileSync(this.path, JSON.stringify(entry) + "\n");
+    appendFileSync(this.path, JSON.stringify(entry) + "\n", { mode: FILE_MODE });
   }
 
   readAll(): T[] {
@@ -70,7 +77,7 @@ export class JsonlLog<T> {
 export class Storage {
   private files: JsonFile<unknown>[] = [];
   constructor(public readonly dir: string) {
-    mkdirSync(dir, { recursive: true });
+    privateDir(dir);
   }
   json<T>(name: string, fallback: T): JsonFile<T> {
     const f = new JsonFile<T>(join(this.dir, name), fallback);

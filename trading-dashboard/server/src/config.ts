@@ -72,7 +72,7 @@ export function dataDir(s: AppSettings): string {
 /** Persist user-changed settings (only the given keys) to settings.local.json. */
 export function saveLocalSettings(patch: Partial<AppSettings>): void {
   const current = readJson(LOCAL_FILE);
-  writeAtomic(LOCAL_FILE, JSON.stringify(merge(current, patch as Record<string, unknown>), null, 2), 0o644);
+  writeAtomic(LOCAL_FILE, JSON.stringify(merge(current, patch as Record<string, unknown>), null, 2), 0o600);
 }
 
 // ---------------------------------------------------------------------------------------
@@ -96,6 +96,13 @@ export function saveCredentials(broker: string, fields: Record<string, string>):
   }
   all[broker] = next;
   writeAtomic(CREDENTIALS_FILE, JSON.stringify(all, null, 2), 0o600);
+}
+
+/** Make existing local settings/credentials owner-only (they may predate this check). */
+export function lockDownConfigFiles(): void {
+  for (const f of [LOCAL_FILE, CREDENTIALS_FILE]) {
+    try { if (existsSync(f)) chmodSync(f, 0o600); } catch { /* not owner */ }
+  }
 }
 
 /** Field names that are set (values withheld). */

@@ -66,16 +66,38 @@ export async function buildApp(settings: AppSettings, opts: { provider?: MarketD
 
   const app = Fastify({ logger: opts.logger ? { level: "info" } : false, bodyLimit: 256 * 1024 });
 
-  // ---------------------------------------------------------------- local-only guard
-  // Blocks DNS-rebinding and cross-site requests from other web pages to this local server.
+  // ---------------------------------------------------------------- request guard
+  // Only this dashboard's own page may talk to the server:
+  // - Host must be localhost (blocks DNS rebinding) while bound to loopback;
+  // - Origin, when sent, must match the Host (blocks other websites, incl. WebSocket hijacking);
+  // - browsers' Sec-Fetch-Site must not be "cross-site" (defence in depth for old/odd clients).
   const loopback = ["127.0.0.1", "localhost", "[::1]", "::1"].includes(settings.host);
   const hostOk = (h: string | undefined) => !!h && /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.test(h);
   app.addHook("onRequest", async (req, reply) => {
-    if (!loopback) return; // user deliberately exposed the server
+    const host = req.headers.host;
     const origin = req.headers.origin;
-    if (!hostOk(req.headers.host) || (origin && !hostOk(origin.replace(/^https?:\/\//i, "")))) {
-      return reply.code(403).send({ error: "Forbidden: local requests only" });
-    }
+    const site = req.headers["sec-fetch-site"];
+    const originHost = origin?.replace(/^https?:\/\//i, "");
+    const bad =
+      (loopback && !hostOk(host)) ||
+      (origin !== undefined && (!/^https?:\/\//i.test(origin) || originHost?.toLowerCase() !== host?.toLowerCase())) ||
+      site === "cross-site";
+    if (bad) return reply.code(403).send({ error: "Forbidden: requests from other sites are not allowed" });
+  });
+
+  // Browser hardening for every response.
+  app.addHook("onSend", async (req, reply, payload) => {
+    reply.header("Content-Security-Policy",
+      "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' ws: wss:; " +
+      "object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
+    reply.header("X-Frame-Options", "DENY"); // no clickjacking of Buy/Sell buttons
+    reply.header("X-Content-Type-Options", "nosniff");
+    reply.header("Referrer-Policy", "no-referrer");
+    reply.header("Cross-Origin-Opener-Policy", "same-origin");
+    reply.header("Cross-Origin-Resource-Policy", "same-origin");
+    reply.header("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()");
+    if (req.url.startsWith("/api/")) reply.header("Cache-Control", "no-store");
+    return payload;
   });
 
   app.setErrorHandler((err: Error & { statusCode?: number }, _req, reply) => {
