@@ -5,7 +5,7 @@ import type { Instrument } from "../lib/types";
 const TICKER = /^[A-Z][A-Z0-9.\-]{0,9}$/;
 
 /** Ticker/name autocomplete. Arrow keys + Enter, or type any ticker and press Enter. */
-export function SymbolSearch({ onPick, exclude }: { onPick: (symbol: string) => void; exclude: string[] }) {
+export function SymbolSearch({ onPick, exclude, placeholder = "Add symbol (e.g. AAPL, SPY)…" }: { onPick: (symbol: string) => void; exclude: string[]; placeholder?: string }) {
   const [q, setQ] = useState("");
   const [results, setResults] = useState<Instrument[]>([]);
   const [open, setOpen] = useState(false);
@@ -36,7 +36,7 @@ export function SymbolSearch({ onPick, exclude }: { onPick: (symbol: string) => 
     <div className="search">
       <input
         className="search-input"
-        placeholder="Add symbol (e.g. AAPL, SPY)…"
+        placeholder={placeholder}
         value={q}
         onChange={(e) => { setQ(e.target.value.toUpperCase()); setOpen(true); }}
         onFocus={() => setOpen(true)}

@@ -1,6 +1,7 @@
 import { createStore } from "./createStore";
 import { api } from "./api";
 import { ingestQuotes } from "./quotes";
+import { parseOcc, contractShort } from "./options";
 import type { Account, BrokerRef, Instrument, Order, OrderRequest, Position, PublicSettings, Side, Widget } from "./types";
 
 export interface Ticket {
@@ -36,6 +37,8 @@ interface AppState {
   realized: Record<string, number>;
   /** Bumped whenever fills may have changed, so P&L views refetch. */
   pnlVersion: number;
+  /** Option contracts each visible options widget needs streamed. */
+  chainSubs: Record<string, string[]>;
 }
 
 export const store = createStore<AppState>({
@@ -56,6 +59,7 @@ export const store = createStore<AppState>({
   toasts: [],
   realized: {},
   pnlVersion: 0,
+  chainSubs: {},
 });
 
 export const useApp = store.useStore;
@@ -65,6 +69,12 @@ export function toast(text: string, kind: Toast["kind"] = "info"): void {
   const t = { id: ++toastSeq, kind, text };
   store.set((s) => ({ toasts: [...s.toasts, t].slice(-5) }));
   setTimeout(() => store.set((s) => ({ toasts: s.toasts.filter((x) => x.id !== t.id) })), kind === "err" ? 6000 : 3500);
+}
+
+/** Ticker, or a short contract name for options ("AAPL $230C Nov 20"). */
+export function displayName(symbol: string): string {
+  const c = parseOcc(symbol);
+  return c ? contractShort(c) : symbol;
 }
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -118,6 +128,25 @@ export const actions = {
     } catch (e) {
       toast(errText(e), "err");
     }
+  },
+
+  async addOptionsWidget(underlying = "SPY"): Promise<void> {
+    try {
+      const w = await api.createOptionsWidget(underlying);
+      store.set((s) => ({ widgets: [...s.widgets, w] }));
+      requestAnimationFrame(() => document.getElementById(`w-${w.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    } catch (e) {
+      toast(errText(e), "err");
+    }
+  },
+
+  setChainSubs(widgetId: string, symbols: string[] | null): void {
+    store.set((s) => {
+      const next = { ...s.chainSubs };
+      if (symbols) next[widgetId] = symbols;
+      else delete next[widgetId];
+      return { chainSubs: next };
+    });
   },
 
   async patchWidget(id: string, patch: Partial<Widget>): Promise<void> {
@@ -189,10 +218,11 @@ export const actions = {
         toast(`Rejected: ${order.reason ?? "unknown reason"}`, "err");
         return false;
       }
+      const what = displayName(order.symbol);
       toast(
         order.status === "filled"
-          ? `Filled: ${order.side.toUpperCase()} ${order.qty} ${order.symbol} @ ${order.avgFillPrice?.toFixed(2)}`
-          : `Order placed: ${order.side.toUpperCase()} ${order.qty} ${order.symbol} (${order.type.replace("_", " ")})`,
+          ? `Filled: ${order.side.toUpperCase()} ${order.qty} ${what} @ ${order.avgFillPrice?.toFixed(2)}`
+          : `Order placed: ${order.side.toUpperCase()} ${order.qty} ${what} (${order.type.replace("_", " ")})`,
         "ok",
       );
       return true;

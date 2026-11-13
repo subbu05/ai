@@ -16,6 +16,7 @@ function neededSymbols(): string[] {
   for (const p of s.positions) set.add(p.symbol);
   for (const o of s.orders) if (o.status === "open") set.add(o.symbol);
   if (s.ticket) set.add(s.ticket.symbol);
+  for (const list of Object.values(s.chainSubs)) for (const sym of list) set.add(sym);
   return [...set].sort();
 }
 

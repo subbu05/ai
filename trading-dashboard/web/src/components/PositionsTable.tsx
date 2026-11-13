@@ -4,6 +4,7 @@ import { useApp, actions, store } from "../lib/store";
 import { getQuote, useQuote, useQuotesVersion } from "../lib/quotes";
 import type { GuardStatus, Position } from "../lib/types";
 import { KillToggle } from "./KillToggle";
+import { markPrice, mult, parseOcc, contractLabel } from "../lib/options";
 import { fmtPct, fmtPrice, fmtQty, fmtSignedUsd, fmtUsd, tone } from "../lib/format";
 
 /** Profit-guard state (today's peak, trigger price) lives on the server; poll it while visible. */
@@ -58,16 +59,25 @@ const PositionRow = memo(function PositionRow({ p, g }: { p: Position; g?: Guard
   const realized = useApp((s) => s.realized[p.symbol]) ?? p.realizedPnl;
   const q = useQuote(p.symbol);
   const name = useApp((s) => s.instruments[p.symbol]?.name);
-  const last = q?.last;
-  const mv = last !== undefined ? p.qty * last : undefined;
-  const cost = p.qty * p.avgCost;
+  const opt = parseOcc(p.symbol);
+  const m = mult(p.symbol);
+  const last = markPrice(q, p.symbol);
+  const mv = last !== undefined ? p.qty * last * m : undefined;
+  const cost = p.qty * p.avgCost * m;
   const unreal = mv !== undefined ? mv - cost : undefined;
-  const day = q ? p.qty * (q.last - q.prevClose) : undefined;
+  const day = q && last !== undefined ? p.qty * (last - q.prevClose) * m : undefined;
   const total = unreal !== undefined ? unreal + realized : undefined;
   return (
     <tr>
-      <td className="l sym" title={name}><span className="sym-text">{p.symbol}</span><div className="sym-name">{name !== p.symbol ? name : ""}</div></td>
-      <td className="num">{fmtQty(p.qty)}</td>
+      {opt ? (
+        <td className="l sym" title={`${name} · ${p.symbol}`}>
+          <span className="sym-text">{opt.underlying}</span><span className="type option">OPT</span>
+          <div className="sym-name">{contractLabel(opt)}</div>
+        </td>
+      ) : (
+        <td className="l sym" title={name}><span className="sym-text">{p.symbol}</span><div className="sym-name">{name !== p.symbol ? name : ""}</div></td>
+      )}
+      <td className="num" title={opt ? `${fmtQty(p.qty)} contracts = ${fmtQty(p.qty * 100)} shares` : undefined}>{fmtQty(p.qty)}{opt && <span className="muted small"> ct</span>}</td>
       <td className="num">{fmtPrice(p.avgCost)}</td>
       <td className="num">{fmtPrice(last)}</td>
       <td className="num">{fmtUsd(mv)}</td>
@@ -89,7 +99,7 @@ const PositionRow = memo(function PositionRow({ p, g }: { p: Position; g?: Guard
       <td className="c actions">
         <button className="btn buy sm" onClick={() => actions.openTicket(p.symbol, "buy")}>Buy</button>
         <button className="btn sell sm" onClick={() => actions.openTicket(p.symbol, "sell", p.qty)}>Sell</button>
-        <button className="btn kill sm" title={`Sell all ${p.symbol} at market now`} onClick={() => store.set({ kill: [p.symbol] })}>Exit</button>
+        <button className="btn kill sm" title={`Sell all ${opt ? contractLabel(opt) : p.symbol} at market now`} onClick={() => store.set({ kill: [p.symbol] })}>Exit</button>
       </td>
     </tr>
   );
@@ -102,9 +112,11 @@ function Totals({ positions }: { positions: Position[] }) {
     let mv = 0, cost = 0, day = 0, realized = 0;
     for (const p of positions) {
       const q = getQuote(p.symbol);
-      mv += p.qty * (q?.last ?? p.avgCost);
-      cost += p.qty * p.avgCost;
-      day += q ? p.qty * (q.last - q.prevClose) : 0;
+      const m = mult(p.symbol);
+      const mark = markPrice(q, p.symbol);
+      mv += p.qty * (mark ?? p.avgCost) * m;
+      cost += p.qty * p.avgCost * m;
+      day += q && mark !== undefined ? p.qty * (mark - q.prevClose) * m : 0;
       realized += realizedMap[p.symbol] ?? p.realizedPnl;
     }
     return { mv, cost, day, realized, unreal: mv - cost };

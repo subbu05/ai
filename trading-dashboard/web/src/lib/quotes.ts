@@ -8,7 +8,8 @@ import type { Quote } from "./types";
  *    requestAnimationFrame, so React does at most one render pass per frame.
  *  - Quotes are immutable objects, so useSyncExternalStore snapshots compare by reference.
  */
-type Row = [string, number, number, number, number, number, number, number, number];
+/** [symbol, last, bid, ask, prevClose, high, low, volume, ts, ...options: iv, delta, gamma, theta, vega, rho, oi, underlyingPrice] */
+type Row = [string, number, number, number, number, number, number, number, number, ...number[]];
 
 const quotes = new Map<string, Quote>();
 const symbolListeners = new Map<string, Set<() => void>>();
@@ -23,7 +24,11 @@ export function ingestRows(rows: Row[]): void {
 }
 
 export function ingestQuotes(list: Omit<Quote, "dir">[]): void {
-  ingestRows(list.map((q) => [q.symbol, q.last, q.bid, q.ask, q.prevClose, q.high, q.low, q.volume, q.ts]));
+  ingestRows(list.map((q): Row => {
+    const base: Row = [q.symbol, q.last, q.bid, q.ask, q.prevClose, q.high, q.low, q.volume, q.ts];
+    const g = q.greeks;
+    return g ? [...base, g.iv, g.delta, g.gamma, g.theta, g.vega, g.rho, q.oi ?? 0, q.underlyingPrice ?? 0] as Row : base;
+  }));
 }
 
 function apply(): void {
@@ -31,11 +36,18 @@ function apply(): void {
   const batch = pending;
   pending = [];
   const touched = new Set<string>();
-  for (const [symbol, last, bid, ask, prevClose, high, low, volume, ts] of batch) {
+  for (const r of batch) {
+    const [symbol, last, bid, ask, prevClose, high, low, volume, ts] = r;
     const prev = quotes.get(symbol);
     if (prev && prev.ts > ts) continue;
     const dir = prev ? Math.sign(last - prev.last) : 0;
-    quotes.set(symbol, { symbol, last, bid, ask, prevClose, high, low, volume, ts, dir });
+    const q: Quote = { symbol, last, bid, ask, prevClose, high, low, volume, ts, dir };
+    if (r.length > 9) {
+      q.greeks = { iv: r[9], delta: r[10], gamma: r[11], theta: r[12], vega: r[13], rho: r[14] };
+      q.oi = r[15];
+      q.underlyingPrice = r[16];
+    }
+    quotes.set(symbol, q);
     touched.add(symbol);
   }
   if (!touched.size) return;

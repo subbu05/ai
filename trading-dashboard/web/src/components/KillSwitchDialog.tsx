@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useApp, store, actions } from "../lib/store";
 import { getQuote, useQuotesVersion } from "../lib/quotes";
+import { mult } from "../lib/options";
+import { displayName } from "../lib/store";
 import { fmtPrice, fmtQty, fmtSignedUsd, fmtUsd, tone } from "../lib/format";
 
 /**
@@ -21,7 +23,8 @@ export function KillSwitchDialog() {
     () =>
       positions.filter((p) => inScope(p.symbol)).map((p) => {
         const bid = getQuote(p.symbol)?.bid;
-        return { ...p, bid, value: bid !== undefined ? bid * p.qty : undefined, pnl: bid !== undefined ? (bid - p.avgCost) * p.qty : undefined };
+        const m = mult(p.symbol);
+        return { ...p, bid, value: bid !== undefined ? bid * p.qty * m : undefined, pnl: bid !== undefined ? (bid - p.avgCost) * p.qty * m : undefined };
       }),
     // v: recompute on every quote frame so the estimate stays live
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -50,7 +53,7 @@ export function KillSwitchDialog() {
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && close()}>
       <div className="modal killsw">
         <div className="ticket-head">
-          <h2>⛔ {scope === "all" ? "Sell everything now" : `Exit ${scope.join(", ")}`}</h2>
+          <h2>⛔ {scope === "all" ? "Sell everything now" : `Exit ${scope.map(displayName).join(", ")}`}</h2>
           <button className="icon-btn" onClick={close} aria-label="Close">✕</button>
         </div>
         <p className="small muted" style={{ margin: 0 }}>
@@ -65,7 +68,7 @@ export function KillSwitchDialog() {
             <tbody>
               {rows.map((r) => (
                 <tr key={r.symbol}>
-                  <td className="l sym"><span className="sym-text">{r.symbol}</span></td>
+                  <td className="l sym"><span className="sym-text">{displayName(r.symbol)}</span></td>
                   <td className="num">{fmtQty(r.qty)}</td>
                   <td className="num">{fmtPrice(r.avgCost)}</td>
                   <td className="num">{fmtPrice(r.bid)}</td>
@@ -81,7 +84,7 @@ export function KillSwitchDialog() {
         </div>
         {broker?.live && <p className="note">This sells real positions on {broker.name}.</p>}
         <button className="btn block kill" autoFocus disabled={busy || rows.length === 0} onClick={() => void run()}>
-          {busy ? "Selling…" : rows.length ? `Sell ${rows.length === 1 ? rows[0].symbol : `all ${rows.length} positions`} now` : "No positions to sell"}
+          {busy ? "Selling…" : rows.length ? `Sell ${rows.length === 1 ? displayName(rows[0].symbol) : `all ${rows.length} positions`} now` : "No positions to sell"}
         </button>
       </div>
     </div>

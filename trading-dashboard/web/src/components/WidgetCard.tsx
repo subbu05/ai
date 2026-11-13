@@ -4,129 +4,70 @@ import { actions } from "../lib/store";
 import { getQuote } from "../lib/quotes";
 import { QuoteRow } from "./QuoteRow";
 import { SymbolSearch } from "./SymbolSearch";
+import { WidgetShell } from "./WidgetShell";
+import { OptionsWidget } from "./OptionsWidget";
 
 const SORT_LABELS: Record<NonNullable<Widget["sort"]>, string> = {
   manual: "Manual", symbol: "Symbol", change: "% Change", price: "Price",
 };
 
+/** Picks the widget body by kind: a stock/ETF watchlist or an option chain. */
+export const WidgetCard = memo(function WidgetCard({ widget }: { widget: Widget }) {
+  return widget.kind === "options" && widget.options ? <OptionsWidget widget={widget} /> : <QuotesWidget widget={widget} />;
+});
+
 /**
- * One watchlist widget. Rows subscribe to their own quotes, so this component only
+ * Watchlist widget. Rows subscribe to their own quotes, so this component only
  * re-renders when the widget itself changes. For value-based sorts, the order is
  * recomputed once a second instead of on every tick to keep rows from jumping around.
  */
-export const WidgetCard = memo(function WidgetCard({ widget }: { widget: Widget }) {
-  const [editing, setEditing] = useState(false);
-  const [title, setTitle] = useState(widget.title);
-  const [dragOver, setDragOver] = useState(false);
+function QuotesWidget({ widget }: { widget: Widget }) {
   const order = useSortedSymbols(widget);
 
-  useEffect(() => setTitle(widget.title), [widget.title]);
-
-  const commitTitle = () => {
-    setEditing(false);
-    const t = title.trim();
-    if (t && t !== widget.title) void actions.patchWidget(widget.id, { title: t });
-    else setTitle(widget.title);
-  };
-
   return (
-    <article
-      className={`widget ${dragOver ? "drag-over" : ""}`}
-      onDragOver={(e) => {
-        if (e.dataTransfer.types.includes("application/x-widget")) {
-          e.preventDefault();
-          setDragOver(true);
-        }
-      }}
-      onDragLeave={() => setDragOver(false)}
-      onDrop={(e) => {
-        setDragOver(false);
-        const id = e.dataTransfer.getData("application/x-widget");
-        if (id) void actions.moveWidget(id, widget.id);
-      }}
+    <WidgetShell
+      widget={widget}
+      count={widget.symbols.length}
+      tools={
+        <select
+          className="mini-select"
+          value={widget.sort ?? "manual"}
+          onChange={(e) => void actions.patchWidget(widget.id, { sort: e.target.value as Widget["sort"] })}
+          title="Sort by"
+        >
+          {Object.entries(SORT_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </select>
+      }
     >
-      <div
-        className="widget-head"
-        draggable={!editing}
-        onDragStart={(e) => {
-          e.dataTransfer.setData("application/x-widget", widget.id);
-          e.dataTransfer.effectAllowed = "move";
-        }}
-      >
-        <span className="grip" title="Drag to reorder">⋮⋮</span>
-        {editing ? (
-          <input
-            className="title-input"
-            autoFocus
-            value={title}
-            maxLength={80}
-            onChange={(e) => setTitle(e.target.value)}
-            onBlur={commitTitle}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") commitTitle();
-              if (e.key === "Escape") { setTitle(widget.title); setEditing(false); }
-            }}
-          />
-        ) : (
-          <h2 className="widget-title" onDoubleClick={() => setEditing(true)} title="Double-click to rename">
-            {widget.title}
-          </h2>
-        )}
-        <span className="count">{widget.symbols.length}</span>
-        <div className="widget-tools">
-          <select
-            className="mini-select"
-            value={widget.sort ?? "manual"}
-            onChange={(e) => void actions.patchWidget(widget.id, { sort: e.target.value as Widget["sort"] })}
-            title="Sort by"
-          >
-            {Object.entries(SORT_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-          </select>
-          <button className="icon-btn" title="Rename" onClick={() => setEditing(true)}>✎</button>
-          <button className="icon-btn" title={widget.collapsed ? "Expand" : "Collapse"}
-            onClick={() => void actions.patchWidget(widget.id, { collapsed: !widget.collapsed })}>
-            {widget.collapsed ? "▸" : "▾"}
-          </button>
-          <button className="icon-btn danger" title="Delete widget"
-            onClick={() => { if (confirm(`Delete widget "${widget.title}"?`)) void actions.deleteWidget(widget.id); }}>
-            ✕
-          </button>
+      <SymbolSearch onPick={(s) => void actions.addSymbol(widget.id, s)} exclude={widget.symbols} />
+      {widget.symbols.length ? (
+        <div className="table-wrap">
+          <table className="quotes">
+            <thead>
+              <tr>
+                <th className="l">Symbol</th>
+                <th title="Your average purchase price">Paid</th>
+                <th>Last</th>
+                <th>Day chg</th>
+                <th title="Realized + unrealized P&L for this ticker">Total P&L</th>
+                <th className="hide-narrow">Bid × Ask</th>
+                <th className="c">Trade</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {order.map((s) => (
+                <QuoteRow key={s} symbol={s} widgetId={widget.id} />
+              ))}
+            </tbody>
+          </table>
         </div>
-      </div>
-
-      {!widget.collapsed && (
-        <>
-          <SymbolSearch onPick={(s) => void actions.addSymbol(widget.id, s)} exclude={widget.symbols} />
-          {widget.symbols.length ? (
-            <div className="table-wrap">
-              <table className="quotes">
-                <thead>
-                  <tr>
-                    <th className="l">Symbol</th>
-                    <th title="Your average purchase price">Paid</th>
-                    <th>Last</th>
-                    <th>Day chg</th>
-                    <th title="Realized + unrealized P&L for this ticker">Total P&L</th>
-                    <th className="hide-narrow">Bid × Ask</th>
-                    <th className="c">Trade</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {order.map((s) => (
-                    <QuoteRow key={s} symbol={s} widgetId={widget.id} />
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <p className="muted pad">Add stocks or ETFs with the search box above.</p>
-          )}
-        </>
+      ) : (
+        <p className="muted pad">Add stocks or ETFs with the search box above.</p>
       )}
-    </article>
+    </WidgetShell>
   );
-});
+}
 
 function useSortedSymbols(widget: Widget): string[] {
   const sort = widget.sort ?? "manual";

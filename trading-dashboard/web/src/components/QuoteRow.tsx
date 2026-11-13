@@ -2,6 +2,7 @@ import { memo } from "react";
 import { useQuote } from "../lib/quotes";
 import { useApp, actions } from "../lib/store";
 import { KillToggle } from "./KillToggle";
+import { mult } from "../lib/options";
 import { fmtPrice, fmtSigned, fmtSignedUsd, fmtPct, fmtQty, tone } from "../lib/format";
 
 /**
@@ -19,7 +20,7 @@ export const QuoteRow = memo(function QuoteRow({ symbol, widgetId }: { symbol: s
   const chg = q ? q.last - q.prevClose : undefined;
   const pct = q && chg !== undefined ? (chg / q.prevClose) * 100 : undefined;
   // Total P&L for this ticker = lifetime realized (closed trades) + unrealized on shares held now.
-  const unreal = pos && q ? (q.last - pos.avgCost) * pos.qty : undefined;
+  const unreal = pos && q ? (q.last - pos.avgCost) * pos.qty * mult(symbol) : undefined;
   const hasPnl = realized !== undefined || unreal !== undefined;
   const total = hasPnl ? (realized ?? 0) + (unreal ?? 0) : undefined;
   const vsPaid = pos && q ? ((q.last - pos.avgCost) / pos.avgCost) * 100 : undefined;

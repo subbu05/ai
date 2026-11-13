@@ -11,6 +11,9 @@ import { QuoteHub } from "./market/quoteHub.js";
 import { createMarketData } from "./market/index.js";
 import { lookup } from "./market/catalog.js";
 import type { MarketDataProvider } from "./market/provider.js";
+import { OptionsAwareProvider } from "./options/provider.js";
+import { SimulatedOptionModel, listExpirations, strikesAround } from "./options/chain.js";
+import { CONTRACT_MULTIPLIER, formatOcc, isOption } from "./options/occ.js";
 import { BrokerManager } from "./brokers/manager.js";
 import { BROKERS } from "./brokers/index.js";
 import { PaperBroker } from "./brokers/paper.js";
@@ -32,9 +35,17 @@ export interface AppContext {
 
 const MAX_WS_BUFFER = 1 << 20; // 1 MiB: beyond this a client is "slow"; we skip deltas and resync later
 
-/** Compact wire format for quotes: [symbol, last, bid, ask, prevClose, high, low, volume, ts] */
-const encodeQuote = (q: Quote): string =>
-  `[${JSON.stringify(q.symbol)},${q.last},${q.bid},${q.ask},${q.prevClose},${q.high},${q.low},${q.volume},${q.ts}]`;
+/**
+ * Compact wire format for quotes: [symbol, last, bid, ask, prevClose, high, low, volume, ts]
+ * Options append: iv, delta, gamma, theta, vega, rho, openInterest, underlyingPrice.
+ */
+const rnd = (n: number, dp: number) => Number(n.toFixed(dp));
+const encodeQuote = (q: Quote): string => {
+  const base = `[${JSON.stringify(q.symbol)},${q.last},${q.bid},${q.ask},${q.prevClose},${q.high},${q.low},${q.volume},${q.ts}`;
+  const g = q.greeks;
+  if (!g) return base + "]";
+  return `${base},${rnd(g.iv, 4)},${rnd(g.delta, 4)},${rnd(g.gamma, 5)},${rnd(g.theta, 4)},${rnd(g.vega, 4)},${rnd(g.rho, 4)},${q.oi ?? 0},${q.underlyingPrice ?? 0}]`;
+};
 
 interface Client {
   socket: WebSocket;
@@ -45,7 +56,8 @@ interface Client {
 export async function buildApp(settings: AppSettings, opts: { provider?: MarketDataProvider; logger?: boolean; persistSettings?: boolean } = {}): Promise<AppContext> {
   const storage = new Storage(dataDir(settings));
   const persist = (patch: Partial<AppSettings>) => { if (opts.persistSettings !== false) saveLocalSettings(patch); };
-  const provider = opts.provider ?? createMarketData(settings);
+  const optionModel = new SimulatedOptionModel(settings.options?.riskFreeRate ?? 0.045);
+  const provider = new OptionsAwareProvider(opts.provider ?? createMarketData(settings), optionModel);
   const hub = new QuoteHub(provider, settings.marketData.flushMs);
   const widgets = new WidgetStore(storage);
   const brokers = new BrokerManager({ storage, hub, startingCash: settings.paper.startingCash });
@@ -201,7 +213,7 @@ export async function buildApp(settings: AppSettings, opts: { provider?: MarketD
 
   // widgets
   app.get("/api/widgets", async () => widgets.list());
-  app.post<{ Body: { title?: string; symbols?: string[] } }>("/api/widgets", async (req, reply) => {
+  app.post<{ Body: { title?: string; symbols?: string[]; kind?: string; options?: unknown } }>("/api/widgets", async (req, reply) => {
     reply.code(201);
     return widgets.create(req.body ?? {});
   });
@@ -224,6 +236,31 @@ export async function buildApp(settings: AppSettings, opts: { provider?: MarketD
     const exact = normalizeSymbol(q);
     if (exact && !results.some((r) => r.symbol === exact)) results.push(lookup(exact));
     return results;
+  });
+
+  // options
+  app.get<{ Params: { underlying: string } }>("/api/options/:underlying/expirations", async (req) => {
+    const u = normalizeSymbol(req.params.underlying);
+    if (!u || isOption(u)) throw new HttpError(400, "Invalid underlying symbol");
+    return { underlying: u, expirations: listExpirations() };
+  });
+  app.get<{ Params: { underlying: string }; Querystring: { expiry?: string; strikes?: string } }>("/api/options/:underlying/chain", async (req) => {
+    const u = normalizeSymbol(req.params.underlying);
+    if (!u || isOption(u)) throw new HttpError(400, "Invalid underlying symbol");
+    const expirations = listExpirations();
+    // Default: the nearest expiration that isn't today's (0 DTE is rarely what you want to browse).
+    const exp = expirations.find((e) => e.date === req.query.expiry) ?? expirations.find((e) => e.dte >= 1) ?? expirations[0];
+    const each = Math.min(25, Math.max(2, Math.floor(Number(req.query.strikes)) || 8));
+    const [uq] = await hub.getMany([u]);
+    if (!uq) throw new HttpError(404, `No quote for ${u}`);
+    const strikes = strikesAround(uq.last, each);
+    const calls = strikes.map((k) => formatOcc(u, exp.date, "C", k));
+    const puts = strikes.map((k) => formatOcc(u, exp.date, "P", k));
+    const quotes = await hub.getMany([...calls, ...puts]);
+    return {
+      underlying: u, expiry: exp.date, dte: exp.dte, expirations, strikes, calls, puts,
+      multiplier: CONTRACT_MULTIPLIER, riskFreeRate: optionModel.riskFreeRate, quotes,
+    };
   });
 
   // trading

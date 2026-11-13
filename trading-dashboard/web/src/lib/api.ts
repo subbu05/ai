@@ -1,4 +1,4 @@
-import type { KillSwitchReport, GuardEvent, GuardStatus, Account, BrokerInfo, Fill, Instrument, Order, OrderRequest, Position, PublicSettings, Quote, SymbolPnl, Widget, BrokerRef } from "./types";
+import type { OptionChain, Expiration, KillSwitchReport, GuardEvent, GuardStatus, Account, BrokerInfo, Fill, Instrument, Order, OrderRequest, Position, PublicSettings, Quote, SymbolPnl, Widget, BrokerRef } from "./types";
 
 async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
@@ -24,6 +24,10 @@ export const api = {
   bootstrap: () => req<Bootstrap>("GET", "/api/bootstrap"),
 
   createWidget: (title: string, symbols: string[] = []) => req<Widget>("POST", "/api/widgets", { title, symbols }),
+  createOptionsWidget: (underlying: string) => req<Widget>("POST", "/api/widgets", { kind: "options", options: { underlying } }),
+  optionChain: (underlying: string, expiry: string | undefined, strikes: number) =>
+    req<OptionChain>("GET", `/api/options/${encodeURIComponent(underlying)}/chain?strikes=${strikes}${expiry ? `&expiry=${expiry}` : ""}`),
+  expirations: (underlying: string) => req<{ underlying: string; expirations: Expiration[] }>("GET", `/api/options/${encodeURIComponent(underlying)}/expirations`),
   updateWidget: (id: string, patch: Partial<Widget>) => req<Widget>("PATCH", `/api/widgets/${id}`, patch),
   deleteWidget: (id: string) => req<void>("DELETE", `/api/widgets/${id}`),
   reorderWidgets: (ids: string[]) => req<Widget[]>("PUT", "/api/widgets/order", { ids }),

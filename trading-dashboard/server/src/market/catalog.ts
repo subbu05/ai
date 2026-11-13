@@ -1,4 +1,5 @@
 import type { Instrument } from "../types.js";
+import { describe, parseOcc } from "../options/occ.js";
 
 /**
  * Built-in symbol catalog used for search/autocomplete and to seed the simulator.
@@ -67,6 +68,8 @@ const bySymbol = new Map(CATALOG.map((i) => [i.symbol, i]));
 export function lookup(symbol: string): Instrument {
   const hit = bySymbol.get(symbol);
   if (hit) return { symbol: hit.symbol, name: hit.name, type: hit.type };
+  const opt = parseOcc(symbol);
+  if (opt) return { symbol, name: describe(opt), type: "option" };
   return { symbol, name: symbol, type: "stock" };
 }
 

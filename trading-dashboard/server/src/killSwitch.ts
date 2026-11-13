@@ -1,4 +1,5 @@
 import type { Broker } from "./brokers/broker.js";
+import { multiplier } from "./options/occ.js";
 import type { QuoteHub } from "./market/quoteHub.js";
 import { round2 } from "./util.js";
 
@@ -48,7 +49,7 @@ export async function killSwitch(broker: Broker, hub: QuoteHub, symbols?: string
           symbol: p.symbol, qty: p.qty,
           status: o.status === "filled" ? "filled" : o.status === "rejected" ? "rejected" : "open",
           price: o.avgFillPrice,
-          pnl: filled ? round2((o.avgFillPrice! - p.avgCost) * p.qty) : undefined,
+          pnl: filled ? round2((o.avgFillPrice! - p.avgCost) * p.qty * multiplier(p.symbol)) : undefined,
           message: o.reason,
         };
       } catch (err) {

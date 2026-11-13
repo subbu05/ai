@@ -1,5 +1,6 @@
 import type { Fill } from "./types.js";
 import { round2, round6 } from "./util.js";
+import { multiplier } from "./options/occ.js";
 
 export interface SymbolPnl {
   symbol: string;
@@ -27,10 +28,10 @@ export function realizedBySymbol(fills: Fill[]): SymbolPnl[] {
     r.lastTradeAt = Math.max(r.lastTradeAt, f.ts);
     if (f.side === "buy") {
       r.boughtQty += f.qty;
-      r.buyValue += f.qty * f.price;
+      r.buyValue += f.qty * f.price * multiplier(f.symbol);
     } else {
       r.soldQty += f.qty;
-      r.sellValue += f.qty * f.price;
+      r.sellValue += f.qty * f.price * multiplier(f.symbol);
       r.realizedPnl += f.realizedPnl;
       if (f.realizedPnl > 0) r.wins++;
       else if (f.realizedPnl < 0) r.losses++;

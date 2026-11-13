@@ -1,4 +1,5 @@
 import type { Broker } from "./brokers/broker.js";
+import { multiplier } from "./options/occ.js";
 import type { QuoteHub } from "./market/quoteHub.js";
 import type { JsonFile, JsonlLog, Storage } from "./storage.js";
 import type { Position, Quote } from "./types.js";
@@ -170,7 +171,7 @@ export class ProfitGuard {
       }
       const order = await b.placeOrder({ symbol: pos.symbol, side: "sell", qty: pos.qty, type: "market", source: "profit-guard" });
       if (order.status === "rejected") throw new Error(order.reason ?? "rejected");
-      const pnl = order.avgFillPrice !== undefined ? round2((order.avgFillPrice - pos.avgCost) * pos.qty) : undefined;
+      const pnl = order.avgFillPrice !== undefined ? round2((order.avgFillPrice - pos.avgCost) * pos.qty * multiplier(pos.symbol)) : undefined;
       this.emit({
         ...base, action: "sell", qty: pos.qty, price: order.avgFillPrice ?? q.bid,
         message: `Profit guard sold ${pos.qty} ${pos.symbol}` +

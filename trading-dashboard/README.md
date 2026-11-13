@@ -9,6 +9,16 @@ is stored as plain files on your machine.
   change, a **Total P&L per ticker** (realized on closed trades + unrealized now), bid × ask, and
   Buy/Sell. You can rename (double-click the title), sort (manual, symbol, % change, price),
   collapse, delete, and drag widgets to reorder.
+- **Options chain widget** (**+ Options** in the header): pick any stock/ETF and an expiration to
+  see calls on the left and puts on the right of each strike, with live **bid/ask** (click to
+  trade), **% change**, volume, open interest, **IV** and the Greeks **Δ delta, Γ gamma, Θ theta,
+  vega**. In-the-money strikes are shaded and a marker shows where the stock is trading. A summary
+  bar shows the stock's price, days to expiry, **ATM IV**, the **expected move** (from the
+  at-the-money straddle), **put/call ratios** by volume and open interest, and **max pain**. Click
+  a strike for the decision details of the call and the put: cost per contract, **breakeven** and
+  the move it needs, **≈ chance in the money**, intrinsic vs time value, **time decay per
+  day**, dollars per $1 stock move, max loss/profit, and bid/ask spread. Show calls, puts or
+  both, ±4–20 strikes, and Greeks on or off. Columns drop by importance as the widget narrows.
 - **Order ticket**: buy or sell with **market, limit, stop and stop-limit** orders, by shares or
   by dollars (fractional), with day/GTC time in force. It shows estimated cost and buying power.
 - **Kill switch (automatic, can be turned on and off)**: the **🛡 Kill switch ON/OFF** toggle in the
@@ -74,6 +84,27 @@ JSON files are written atomically (temp file + rename) and coalesced, so a crash
 corrupt them and bursts of activity cost one disk write. Set `TD_HOME` to keep `config/` and
 `data/` somewhere else.
 
+## Options
+
+- Contracts use OCC symbols (e.g. `AAPL261211C00225000` = AAPL Dec 11 '26 $225 call). Prices are
+  per share. **1 contract = 100 shares**, so cash, P&L and market value are ×100.
+- The paper broker trades options **long only** (buy to open, sell to close), in whole
+  contracts, with market or limit orders. The ticket defaults to a limit order at the mid,
+  because option spreads are wide.
+- At expiration, paper positions are **cash-settled**: in the money pays intrinsic value
+  (from the stock's last price), otherwise the contract expires worthless (Orders tab: ⏱ expired).
+- Positions are valued at the **mid** (an option's last trade can be stale).
+- The kill switch also covers option positions. Option prices swing far more than stocks,
+  so a 5% pullback can trigger quickly. Use the per-position 🛡 toggle if you'd rather manage
+  an option yourself.
+- **Simulated data:** option prices come from Black-Scholes on the simulated stock price,
+  with a volatility skew and synthetic volume/open interest. The Greeks are mathematically
+  correct for those prices, but this is **not real market data**. `server/src/options/bs.ts` also has
+  an implied-volatility solver for real feeds that don't send Greeks. With a real options
+  data provider, replace `OptionsAwareProvider` (`server/src/options/provider.ts`).
+- The rate used for pricing is `options.riskFreeRate` in `config/settings.json` (default 4.5%).
+- "Chance in the money" uses |delta|, a standard rough estimate, not a guarantee.
+
 ## How profit protection decides
 
 For each held position, every tick:
@@ -126,13 +157,15 @@ The Positions tab shows each position's toggle and current trigger price, or
 | Method | Path | |
 |---|---|---|
 | GET | `/api/bootstrap` | everything the UI needs on load |
-| GET/POST | `/api/widgets` | list / create `{title, symbols}` |
+| GET/POST | `/api/widgets` | list / create `{title, symbols}` or `{kind: "options", options: {underlying}}` |
 | PATCH/DELETE | `/api/widgets/:id` | update `{title?, symbols?, sort?, collapsed?}` / delete |
 | PUT | `/api/widgets/order` | reorder `{ids: [...]}` |
 | GET | `/api/quotes?symbols=AAPL,SPY` | snapshot |
 | GET | `/api/instruments/search?q=app` | symbol search |
 | GET | `/api/account`, `/api/positions`, `/api/orders`, `/api/fills`, `/api/pnl` | portfolio |
-| POST | `/api/orders` | `{symbol, side, qty, type, limitPrice?, stopPrice?, tif?}` |
+| GET | `/api/options/:symbol/expirations` | listed expirations with days to expiry |
+| GET | `/api/options/:symbol/chain?expiry=&strikes=` | strikes, call/put contract symbols, quotes with IV and Greeks |
+| POST | `/api/orders` | `{symbol, side, qty, type, limitPrice?, stopPrice?, tif?}` (symbol can be an option contract) |
 | DELETE | `/api/orders/:id` | cancel |
 | POST | `/api/kill-switch` | `{symbols?}`: cancel open orders and market-sell all (or listed) positions |
 | GET | `/api/profit-guard` | kill-switch settings, per-position peak/trigger price, recent automatic sells |

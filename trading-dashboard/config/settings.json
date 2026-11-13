@@ -18,5 +18,8 @@
     "dropPct": 5,
     "floorPct": 0.25,
     "disabledSymbols": []
+  },
+  "options": {
+    "riskFreeRate": 0.045
   }
 }

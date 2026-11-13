@@ -131,7 +131,7 @@ test("cancel releases reserved buying power", async () => {
 
 test("widgets CRUD persists to local files", async () => {
   const initial = (await call("GET", "/api/widgets")).body;
-  assert.equal(initial.length, 3);
+  assert.equal(initial.length, 4); // 3 watchlists + 1 options chain
 
   const w = (await call("POST", "/api/widgets", { title: "Mine", symbols: ["tsla", "TSLA", "voo"] })).body;
   assert.deepEqual(w.symbols, ["TSLA", "VOO"]);
@@ -147,7 +147,7 @@ test("widgets CRUD persists to local files", async () => {
   assert.equal(onDisk[0].title, "Renamed");
 
   assert.equal((await call("DELETE", `/api/widgets/${w.id}`)).status, 204);
-  assert.equal((await call("GET", "/api/widgets")).body.length, 3);
+  assert.equal((await call("GET", "/api/widgets")).body.length, 4);
 });
 
 test("state survives a restart", async () => {
