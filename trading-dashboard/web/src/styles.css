@@ -252,8 +252,10 @@ tr:hover .paid { color: var(--text); }
 
 /* Widgets size to their own width, not the viewport: drop the least important column when narrow. */
 .widget { container-type: inline-size; }
-@container (max-width: 820px) { .hide-narrow { display: none; } }
-@container (max-width: 560px) { .quotes .sym-name { display: none; } .quotes td, .quotes th { padding-left: 6px; padding-right: 6px; } }
+@container (max-width: 820px) { .hide-narrow { display: none; } .quotes td, .quotes th { padding-left: 7px; padding-right: 7px; } .quotes .actions .btn { padding-left: 9px; padding-right: 9px; } }
+.quotes th.auto-col .short { display: none; }
+@container (max-width: 680px) { .quotes .kill-toggle .kt-label { display: none; } .quotes .kill-toggle.switch { padding: 3px; } .quotes th.auto-col .long { display: none; } .quotes th.auto-col .short { display: inline; } }
+@container (max-width: 680px) { .quotes .sym-name { display: none; } .quotes td, .quotes th { padding-left: 6px; padding-right: 6px; } }
 
 /* ---------- kill switch */
 .btn.kill { background: #b91c1c; border-color: #b91c1c; color: #fff; }
@@ -276,6 +278,11 @@ tr:hover .paid { color: var(--text); }
 .kill-toggle.on { background: var(--up-bg); color: var(--up); border-color: color-mix(in srgb, var(--up) 40%, transparent); }
 .kill-toggle.off { background: var(--surface-2); color: var(--muted); border-color: var(--border); }
 .kill-toggle.master-off { opacity: 0.55; }
+.kill-toggle.switch { display: inline-flex; align-items: center; gap: 5px; margin-left: 0; padding: 2px 7px 2px 3px; border-radius: 999px; }
+.kill-toggle .knob { width: 20px; height: 12px; border-radius: 999px; background: var(--border); position: relative; }
+.kill-toggle .knob::after { content: ""; position: absolute; top: 2px; left: 2px; width: 8px; height: 8px; border-radius: 50%; background: #fff; transition: transform .15s; }
+.kill-toggle.on .knob { background: var(--up); }
+.kill-toggle.on .knob::after { transform: translateX(8px); }
 .guard-cell { white-space: nowrap; }
 
 /* ---------- options chain widget */

@@ -46,11 +46,12 @@ function QuotesWidget({ widget }: { widget: Widget }) {
             <thead>
               <tr>
                 <th className="l">Symbol</th>
-                <th title="Your average purchase price">Paid</th>
+                <th title="Your average purchase price and how many you hold">Bought at</th>
                 <th>Last</th>
                 <th>Day chg</th>
                 <th title="Realized + unrealized P&L for this ticker">Total P&L</th>
                 <th className="hide-narrow">Bid × Ask</th>
+                <th className="c auto-col" title="Kill switch for this ticker: when ON, it is sold automatically to protect profit"><span className="long">Auto-sell</span><span className="short">🛡</span></th>
                 <th className="c">Trade</th>
                 <th />
               </tr>

@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, statSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import WebSocket from "ws";
@@ -175,6 +175,34 @@ test("blocks cross-origin and non-local Host requests", async () => {
   assert.equal(evil.statusCode, 403);
   const rebind = await ctx.app.inject({ method: "GET", url: "/api/account", headers: { host: "attacker.example" } });
   assert.equal(rebind.statusCode, 403);
+  // another local site (different port) can't place orders either
+  const otherPort = await ctx.app.inject({ method: "POST", url: "/api/orders", payload: { symbol: "AAA", side: "buy", qty: 1, type: "market" },
+    headers: { host: "127.0.0.1:8787", origin: "http://127.0.0.1:3000" } });
+  assert.equal(otherPort.statusCode, 403);
+  const nullOrigin = await ctx.app.inject({ method: "POST", url: "/api/kill-switch", payload: {}, headers: { host: "127.0.0.1:8787", origin: "null" } });
+  assert.equal(nullOrigin.statusCode, 403);
+  const crossSite = await ctx.app.inject({ method: "GET", url: "/api/account", headers: { host: "127.0.0.1:8787", "sec-fetch-site": "cross-site" } });
+  assert.equal(crossSite.statusCode, 403);
+  // the dashboard's own page is allowed
+  const own = await ctx.app.inject({ method: "GET", url: "/api/account", headers: { host: "127.0.0.1:8787", origin: "http://127.0.0.1:8787", "sec-fetch-site": "same-origin" } });
+  assert.equal(own.statusCode, 200);
+});
+
+test("sends browser security headers and keeps data files private", async () => {
+  const res = await ctx.app.inject({ method: "GET", url: "/api/account", headers: { host: "127.0.0.1" } });
+  assert.match(String(res.headers["content-security-policy"]), /frame-ancestors 'none'/);
+  assert.equal(res.headers["x-frame-options"], "DENY");
+  assert.equal(res.headers["x-content-type-options"], "nosniff");
+  assert.equal(res.headers["cache-control"], "no-store");
+  await call("POST", "/api/orders", { symbol: "AAA", side: "buy", qty: 1, type: "market" });
+  ctx.storage.flushAll();
+  if (process.platform !== "win32") {
+    assert.equal(statSync(dir).mode & 0o777, 0o700);
+    for (const f of readdirSync(dir, { recursive: true }) as string[]) {
+      const st = statSync(join(dir, f));
+      if (st.isFile()) assert.equal(st.mode & 0o077, 0, `${f} must not be readable by others`);
+    }
+  }
 });
 
 test("websocket streams only subscribed symbols, batched", async () => {

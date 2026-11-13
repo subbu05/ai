@@ -2,7 +2,7 @@ import { useApp, actions } from "../lib/store";
 
 /**
  * Per-ticker kill-switch toggle (automatic profit protection for this one stock).
- * Shown wherever you hold shares. While the master switch is off, it's shown dimmed:
+ * Shown on every watchlist row (it can be set before you buy). While the master switch is off, it's shown dimmed:
  * the ticker keeps its own setting, but nothing sells until the master is back on.
  */
 export function KillToggle({ symbol }: { symbol: string }) {
@@ -17,7 +17,7 @@ export function KillToggle({ symbol }: { symbol: string }) {
   return (
     <button
       type="button"
-      className={`kill-toggle ${active ? "on" : "off"} ${master ? "" : "master-off"}`}
+      className={`kill-toggle switch ${active ? "on" : "off"} ${master ? "" : "master-off"}`}
       title={title}
       aria-pressed={on}
       onClick={(e) => {
@@ -25,7 +25,7 @@ export function KillToggle({ symbol }: { symbol: string }) {
         void actions.setKillSwitchFor(symbol, !on);
       }}
     >
-      🛡 {on ? "ON" : "OFF"}
+      <span className="knob" /><span className="kt-label">{on ? "ON" : "OFF"}</span>
     </button>
   );
 }
