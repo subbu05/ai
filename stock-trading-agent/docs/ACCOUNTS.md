@@ -37,6 +37,8 @@ with `--stdin`.
 | `webull.app_key` / `webull.app_secret` | `WEBULL_APP_KEY` / `WEBULL_APP_SECRET` | Webull MCP |
 | `webull.region_id` / `webull.environment` | `WEBULL_REGION_ID` / `WEBULL_ENVIRONMENT` | `uat` = sandbox, `prod` = live |
 | `robinhood.mcp_token` / `robinhood.account_number` | `ROBINHOOD_MCP_TOKEN` / `ROBINHOOD_ACCOUNT_NUMBER` | Robinhood Agentic Trading MCP |
+| `market_data.provider` | `MARKET_DATA` | live price source: `yahoo`, `finnhub`, `alpaca`, `simulated`, or a chain like `finnhub,yahoo` |
+| `finnhub.api_key` | `FINNHUB_API_KEY` | free key from finnhub.io |
 | `fidelity.mcp_command` / `fidelity.mcp_args` | `FIDELITY_MCP_COMMAND` / `FIDELITY_MCP_ARGS` | unofficial server only |
 
 See [`config/accounts.example.toml`](../config/accounts.example.toml) for the layout.

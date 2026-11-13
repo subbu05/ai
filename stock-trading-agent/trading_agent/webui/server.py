@@ -120,6 +120,7 @@ class TradingApp:
             return {
                 "mode": self.ctx.settings.trading_mode, "live": self.ctx.settings.is_live,
                 "broker": broker.name, "account": account.to_dict(),
+                "data_source": getattr(broker, "data_source", "Simulated prices (offline)"),
                 "realized": {k: pnl[k] for k in ("realized_net", "realized_profit", "realized_loss", "closed_trades")},
                 "watchlist": {"labels": self.watchlist.labels, "items": items},
                 "unwatched_positions": others,
@@ -215,6 +216,40 @@ class TradingApp:
             out = self.registry.get(skill).run(self.order_ctx, **args)
             self.ledger.sync(self.ctx.broker)
         return out
+
+    # ------------------------------------------------------------------ label basket
+    def _basket_plan(self, body: dict):
+        from ..basket import plan_basket
+
+        try:
+            amount = float(body.get("amount") or 0)
+            discount = float(body.get("discount_pct", 5)) / 100
+        except (TypeError, ValueError):
+            raise ApiError(400, "amount and discount must be numbers")
+        return plan_basket(self.order_ctx, self.watchlist, body.get("label", ""), amount,
+                           order_type=body.get("order_type", "market"), discount_pct=discount,
+                           time_in_force=body.get("time_in_force", "day"), skip_held=bool(body.get("skip_held")))
+
+    def basket_preview(self, body: dict) -> dict:
+        from ..basket import run_basket
+
+        with self.lock:
+            return run_basket(self.order_ctx, self.registry, self._basket_plan(body), dry_run=True).to_dict()
+
+    def basket_place(self, body: dict) -> dict:
+        from ..basket import BasketError, run_basket
+
+        if body.get("confirm") is not True:
+            raise ApiError(400, "basket not confirmed")
+        if self.ctx.settings.is_live and body.get("confirm_live") is not True:
+            raise ApiError(400, "live account: tick 'I understand this uses real money'")
+        with self.lock:
+            try:
+                plan = run_basket(self.order_ctx, self.registry, self._basket_plan(body), dry_run=False)
+            except BasketError as e:
+                raise ApiError(400, str(e)) from e
+            self.ledger.sync(self.ctx.broker)
+        return plan.to_dict()
 
     def cancel(self, order_id: str) -> dict:
         if not re.fullmatch(r"[A-Za-z0-9\-]{6,64}", order_id):
@@ -367,6 +402,10 @@ class Handler(BaseHTTPRequestHandler):
                 return app.labels(method, body, name)
             case ("POST", ["order", "preview"]):
                 return app.preview(body)
+            case ("POST", ["basket", "preview"]):
+                return app.basket_preview(body)
+            case ("POST", ["basket"]):
+                return app.basket_place(body)
             case ("POST", ["order"]):
                 return app.place(body)
             case ("POST", ["orders", oid, "cancel"]):

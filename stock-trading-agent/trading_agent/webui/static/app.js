@@ -51,7 +51,8 @@ function renderTop() {
   $("#stats").innerHTML = [
     ["Equity", money(a.equity)], ["Cash", money(a.cash)], ["Buying power", money(a.buying_power)],
     ["Day P&L", signed(a.day_pl)], ["Realized P&L", signed(s.realized.realized_net)],
-  ].map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("");
+  ].map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("") +
+    `<div><dt>Prices</dt><dd class="source">${esc(s.data_source || "")}</dd></div>`;
   const banner = $("#banner");
   if (s.kill_switch) { banner.hidden = false; banner.textContent = "Kill switch is engaged: all trading is blocked. Run `python -m trading_agent resume` to lift it."; }
   else if (s.live) { banner.hidden = false; banner.textContent = "LIVE account: orders placed here use real money."; }
@@ -143,7 +144,9 @@ function renderGroups() {
   host.innerHTML = shown.length ? shown.map(([label, list]) => {
     const pl = list.reduce((s, it) => s + (it.position ? it.position.unrealized_pl : 0), 0);
     const held = list.filter(it => it.position).length;
-    return `<section class="group"><h3>${esc(label)} <span class="muted small">${list.length} ticker${list.length === 1 ? "" : "s"} · ${held} held${held ? " · unrealized " + signed(pl) : ""}</span></h3>${tableHtml(list)}</section>`;
+    const buyAll = label === "Unlabeled" ? "" :
+      `<button type="button" class="secondary buyall" data-act="basket" data-label="${esc(label)}">Buy all ${esc(label)}</button>`;
+    return `<section class="group"><h3>${esc(label)} <span class="muted small">${list.length} ticker${list.length === 1 ? "" : "s"} · ${held} held${held ? " · unrealized " + signed(pl) : ""}</span>${buyAll}</h3>${tableHtml(list)}</section>`;
   }).join("") : `<div class="empty">No tickers match.</div>`;
 }
 
@@ -325,9 +328,76 @@ async function saveLabels() {
   } catch (e) { toast(e.message); }
 }
 
+/* ------------------------------------------------------------------ buy all by label */
+let basket = {label: null, type: "market", previewed: null};
+
+function basketBody() {
+  return {label: basket.label, amount: $("#bkAmount").value.trim(), order_type: basket.type,
+          discount_pct: $("#bkDiscount").value.trim() || "5", time_in_force: $("#bkTif").value,
+          skip_held: $("#bkSkipHeld").checked};
+}
+
+function openBasket(label) {
+  basket = {label, type: "market", previewed: null};
+  const n = STATE.watchlist.items.filter(i => i.labels.includes(label)).length;
+  $("#bkTitle").textContent = `Buy all "${label}"`;
+  $("#bkSub").textContent = `${n} ticker${n === 1 ? "" : "s"}. The amount is split equally; whole shares only. Every order passes the risk checks.`;
+  $("#bkPreview").innerHTML = ""; $("#bkConfirm").disabled = true; $("#bkConfirm").textContent = "Place orders";
+  $("#bkLiveWrap").hidden = !STATE.live; $("#bkLiveAck").checked = false;
+  setSeg("bktype", "market"); $("#bkLimitRow").hidden = true;
+  $("#basketDialog").showModal(); $("#bkAmount").focus();
+}
+
+function basketTable(p, placed) {
+  const okStatus = placed ? ["filled", "new", "partially_filled"] : ["preview_only"];
+  const rows = p.legs.map(l => {
+    const ok = okStatus.includes(l.status);
+    return `<tr><td class="l">${esc(l.symbol)}</td><td>${l.market_price != null ? money(l.market_price) : "-"}</td>
+      <td>${p.order_type === "limit" ? (l.limit_price != null ? money(l.limit_price) : "-") : "market"}</td>
+      <td>${l.qty || "-"}</td><td>${l.qty ? money(l.est_cost) : "-"}</td>
+      <td class="l ${ok ? "ok" : l.status === "skipped" ? "" : "bad"}">${esc(l.status === "preview_only" ? "ready" : l.status.replace(/_/g, " "))}${l.note ? ` <span class="muted">${esc(l.note)}</span>` : ""}</td></tr>`;
+  }).join("");
+  const warn = (p.warnings || []).map(w => `<li>${esc(w)}</li>`).join("");
+  return `<table><thead><tr><th class="l">Ticker</th><th>Market</th><th>${p.order_type === "limit" ? "Limit (−" + (p.discount_pct * 100).toFixed(1) + "%)" : "Order"}</th>
+    <th>Qty</th><th>${placed ? "Cost" : "Est. cost"}</th><th class="l">Status</th></tr></thead><tbody>${rows}</tbody></table>
+    <p class="small">${money(p.per_ticker)} per ticker · ${placed ? "total" : "estimated total"} <b>${money(p.est_total)}</b> · leftover ${money(p.leftover)}</p>
+    ${warn ? `<ul class="small">${warn}</ul>` : ""}`;
+}
+
+async function previewBasket() {
+  try {
+    const p = await api("POST", "basket/preview", basketBody());
+    $("#bkPreview").innerHTML = basketTable(p, false);
+    const n = p.legs.filter(l => l.status === "preview_only").length;
+    const blocked = (p.warnings || []).some(w => w.includes("buying power"));
+    basket.previewed = n && !blocked ? JSON.stringify(basketBody()) : null;
+    $("#bkConfirm").disabled = !basket.previewed;
+    $("#bkConfirm").textContent = n ? `Place ${n} order${n === 1 ? "" : "s"} · ~${money(p.legs.filter(l => l.status === "preview_only").reduce((s, l) => s + l.est_cost, 0))}` : "Place orders";
+  } catch (e) { $("#bkPreview").innerHTML = `<p class="small">${esc(e.message)}</p>`; $("#bkConfirm").disabled = true; }
+}
+
+async function placeBasket() {
+  if (JSON.stringify(basketBody()) !== basket.previewed) { $("#bkConfirm").disabled = true; toast("Changed - preview again."); return; }
+  if (STATE.live && !$("#bkLiveAck").checked) { toast("Tick 'I understand this uses real money' first."); return; }
+  $("#bkConfirm").disabled = true;
+  try {
+    const p = await api("POST", "basket", Object.assign(basketBody(), {confirm: true, confirm_live: STATE.live ? true : undefined}));
+    $("#bkPreview").innerHTML = basketTable(p, true);
+    const filled = p.legs.filter(l => l.status === "filled").length, working = p.legs.filter(l => l.status === "new").length;
+    toast(`Basket placed: ${filled} filled, ${working} working`);
+    basket.previewed = null; $("#bkConfirm").textContent = "Done";
+    await refresh();
+  } catch (e) { toast(e.message); $("#bkConfirm").disabled = false; }
+}
+
+$("#bkPreviewBtn").addEventListener("click", previewBasket);
+$("#bkConfirm").addEventListener("click", placeBasket);
+$("#basketForm").addEventListener("input", e => { if (e.target.id !== "bkLiveAck") { basket.previewed = null; $("#bkConfirm").disabled = true; } });
+$("#basketForm").addEventListener("submit", e => { if (!e.submitter || e.submitter.value !== "cancel") { e.preventDefault(); previewBasket(); } });
+
 /* ------------------------------------------------------------------ events */
 document.addEventListener("click", async ev => {
-  const t = ev.target.closest("[data-act], [data-filter], [data-group], [data-side], [data-amt], [data-del], #clearFilter");
+  const t = ev.target.closest("[data-act], [data-filter], [data-group], [data-side], [data-amt], [data-del], [data-bktype], #clearFilter");
   if (!t) return;
   if (t.id === "clearFilter") { prefs.labels = []; savePrefs(); renderAll(); return; }
   if (t.dataset.filter !== undefined) {
@@ -335,6 +405,10 @@ document.addEventListener("click", async ev => {
     savePrefs(); renderAll(); return;
   }
   if (t.dataset.group) { prefs.group = t.dataset.group; savePrefs(); renderAll(); return; }
+  if (t.dataset.bktype) {
+    basket.type = t.dataset.bktype; setSeg("bktype", basket.type); $("#bkLimitRow").hidden = basket.type !== "limit";
+    basket.previewed = null; $("#bkConfirm").disabled = true; return;
+  }
   if (t.dataset.side) { trade.side = t.dataset.side; setSeg("side", trade.side); renderDrawerInfo(); invalidatePreview(); return; }
   if (t.dataset.amt) { trade.amt = t.dataset.amt; setSeg("amt", trade.amt); $("#amtLabel").textContent = trade.amt === "qty" ? "Shares" : "Dollars"; invalidatePreview(); return; }
   if (t.dataset.del) {
@@ -346,6 +420,7 @@ document.addEventListener("click", async ev => {
   try {
     switch (t.dataset.act) {
       case "trade": await openDrawer(sym); break;
+      case "basket": openBasket(t.dataset.label); break;
       case "labels": openLabels(sym); break;
       case "remove":
         if (confirm(`Remove ${sym} from the watchlist? (Positions are not sold.)`)) { await api("DELETE", "watchlist/" + encodeURIComponent(sym)); toast(`${sym} removed`); await refresh(); }

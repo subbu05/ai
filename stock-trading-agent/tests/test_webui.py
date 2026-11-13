@@ -171,3 +171,26 @@ def test_body_must_be_json(server):
                  headers={"Host": f"127.0.0.1:{port}", "X-Auth-Token": token,
                           "Content-Type": "application/x-www-form-urlencoded"})
     assert conn.getresponse().status == 415
+
+
+def test_basket_preview_and_place_over_http(server, broker):
+    _, port, token = server
+    for sym in ("AAPL", "MSFT"):
+        call(port, "POST", "/api/watchlist", {"symbol": sym, "labels": ["Tech"]}, token)
+    body = {"label": "Tech", "amount": 10000, "order_type": "limit", "discount_pct": 5}
+    s, plan, _ = call(port, "POST", "/api/basket/preview", body, token)
+    assert s == 200 and plan["per_ticker"] == 5000 and all(l["status"] == "preview_only" for l in plan["legs"])
+    assert broker.list_orders("open") == []
+    assert call(port, "POST", "/api/basket", body, token)[0] == 400          # not confirmed
+    s, done, _ = call(port, "POST", "/api/basket", {**body, "confirm": True}, token)
+    assert s == 200 and {l["status"] for l in done["legs"]} == {"new"}
+    limits = {o.symbol: o.limit_price for o in broker.list_orders("open")}
+    assert limits == {l["symbol"]: l["limit_price"] for l in done["legs"]}
+    state = call(port, "GET", "/api/state", token=token)[1]
+    assert state["data_source"] and len(state["open_orders"]) == 2
+
+
+def test_basket_bad_label_is_400(server):
+    _, port, token = server
+    s, res, _ = call(port, "POST", "/api/basket/preview", {"label": "Nope", "amount": 100}, token)
+    assert s == 400 and "no tickers" in res["error"]

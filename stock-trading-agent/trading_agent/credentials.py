@@ -43,6 +43,8 @@ FIELDS: dict[tuple[str, str], str] = {
     ("webull", "environment"): "WEBULL_ENVIRONMENT",
     ("robinhood", "mcp_token"): "ROBINHOOD_MCP_TOKEN",
     ("robinhood", "account_number"): "ROBINHOOD_ACCOUNT_NUMBER",
+    ("market_data", "provider"): "MARKET_DATA",
+    ("finnhub", "api_key"): "FINNHUB_API_KEY",
     ("fidelity", "mcp_command"): "FIDELITY_MCP_COMMAND",
     ("fidelity", "mcp_args"): "FIDELITY_MCP_ARGS",
 }
@@ -65,6 +67,13 @@ api_key = ""
 api_key_id = ""
 api_secret_key = ""
 paper_trade = "true"
+
+[market_data]
+provider = "yahoo"            # live prices for paper trading: simulated | yahoo | finnhub | alpaca
+                              # fallback chain allowed, e.g. "finnhub,yahoo"
+
+[finnhub]
+api_key = ""                  # free key from finnhub.io (real-time US quotes)
 
 [webull]
 app_key = ""
