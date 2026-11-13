@@ -143,6 +143,26 @@ The Positions tab shows each position's toggle and current trigger price, or
   rather than on every tick. Price flashes are pure CSS, with no timers or effects.
 - No UI framework or state library.
 
+## P&L & Taxes page
+
+Open it from the **P&L & Taxes** tab in the header (or `#/taxes`).
+
+- **Realized P&L, short-term vs long-term.** Every sale is matched to the shares it closed,
+  first-in-first-out (the IRS default). Held one year or less = short-term (taxed like wages);
+  more than one year = long-term (0% / 15% / 20%). Options use the same rule (×100).
+- **Unrealized P&L** per open lot at today's price, with the date each lot turns long-term.
+- **Dividends.** The paper account doesn't pay them, so you record them (qualified or ordinary).
+- **Tax estimate.** Enter filing status, other income, deduction, a flat state rate and any
+  loss carryover. The page shows the extra federal + 3.8% NIIT + state tax your trading causes
+  (negative = losses save tax), where you sit in the ordinary and long-term brackets, the
+  $3,000 loss limit and carryforward, and an "if you sold everything today" figure.
+- **Hints:** lots about to turn long-term (and what waiting saves), losing lots you could
+  harvest, and **wash sales** (loss + re-buy within 30 days, flagged "W").
+- **Export CSV** in Form 8949 layout.
+- Brackets live in `config/tax-rules.json` (2025 and 2026 included). Check them against irs.gov
+  and edit for new years. Estimates only, not tax advice: no AMT, state brackets, Section 1256
+  or wash-sale basis adjustments.
+
 ## Security
 
 - **Local only.** The server listens on `127.0.0.1`, so other machines can't reach it. It has
@@ -169,6 +189,10 @@ The Positions tab shows each position's toggle and current trigger price, or
 | Method | Path | |
 |---|---|---|
 | GET | `/api/bootstrap` | everything the UI needs on load |
+| GET | `/api/tax/report?year=` | realized/unrealized lots, dividends, tax estimate |
+| PUT | `/api/tax/profile` | `{filingStatus, otherIncome, deduction, stateRatePct, lossCarryover}` |
+| GET/POST | `/api/dividends` | list / add `{symbol, date, amount, qualified}` |
+| DELETE | `/api/dividends/:id` | remove a dividend |
 | GET/POST | `/api/widgets` | list / create `{title, symbols}` or `{kind: "options", options: {underlying}}` |
 | PATCH/DELETE | `/api/widgets/:id` | update `{title?, symbols?, sort?, collapsed?}` / delete |
 | PUT | `/api/widgets/order` | reorder `{ids: [...]}` |

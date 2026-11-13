@@ -1,4 +1,4 @@
-import type { OptionChain, Expiration, KillSwitchReport, GuardEvent, GuardStatus, Account, BrokerInfo, Fill, Instrument, Order, OrderRequest, Position, PublicSettings, Quote, SymbolPnl, Widget, BrokerRef } from "./types";
+import type { OptionChain, Expiration, KillSwitchReport, GuardEvent, GuardStatus, Account, BrokerInfo, Fill, Instrument, Order, OrderRequest, Position, PublicSettings, Quote, SymbolPnl, Widget, BrokerRef, TaxReport, TaxProfile, Dividend } from "./types";
 
 async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
@@ -50,5 +50,9 @@ export const api = {
   setKillSwitchFor: (symbol: string, enabled: boolean) => req<PublicSettings["profitGuard"]>("PUT", `/api/profit-guard/symbols/${encodeURIComponent(symbol)}`, { enabled }),
   profitGuard: () => req<{ settings: PublicSettings["profitGuard"]; positions: GuardStatus[]; events: GuardEvent[] }>("GET", "/api/profit-guard"),
   updateSettings: (patch: { broker?: string; liveTradingEnabled?: boolean; profitGuard?: Partial<PublicSettings["profitGuard"]> }) => req<{ settings: PublicSettings; active: string }>("PUT", "/api/settings", patch),
+  taxReport: (year?: number) => req<TaxReport>("GET", `/api/tax/report${year ? `?year=${year}` : ""}`),
+  saveTaxProfile: (patch: Partial<TaxProfile>) => req<TaxProfile>("PUT", "/api/tax/profile", patch),
+  addDividend: (d: Omit<Dividend, "id">) => req<Dividend>("POST", "/api/dividends", d),
+  deleteDividend: (id: string) => req<void>("DELETE", `/api/dividends/${id}`),
   saveCredentials: (broker: string, fields: Record<string, string>) => req<{ credentials: Record<string, string[]> }>("PUT", `/api/credentials/${broker}`, { fields }),
 };
