@@ -3,6 +3,7 @@ import { useApp, store, actions } from "../lib/store";
 import { getQuote, useQuotesVersion } from "../lib/quotes";
 import { markPrice, mult } from "../lib/options";
 import { fmtSignedUsd, fmtUsd, tone, fmtPct } from "../lib/format";
+import { usePage, goTo } from "../lib/route";
 
 /** Account summary bar. Re-computes live totals at most once per animation frame. */
 export function Header() {
@@ -13,6 +14,7 @@ export function Header() {
   const positions = useApp((s) => s.positions);
   const guard = useApp((s) => s.settings?.profitGuard);
   const v = useQuotesVersion();
+  const page = usePage();
 
   const t = useMemo(() => {
     let mv = 0, cost = 0, day = 0;
@@ -36,6 +38,10 @@ export function Header() {
         <span className="logo">▲</span> Trading Dashboard
         {broker && <span className={`badge ${broker.live ? "live" : "paper"}`}>{broker.live ? "LIVE" : "PAPER"} · {broker.name}</span>}
         <span className={`conn ${conn}`} title={`Stream ${conn} · data: ${provider}`} />
+        <nav className="page-tabs" aria-label="Pages">
+          <button className={page === "trade" ? "on" : ""} aria-current={page === "trade" ? "page" : undefined} onClick={() => goTo("trade")}>Trading</button>
+          <button className={page === "taxes" ? "on" : ""} aria-current={page === "taxes" ? "page" : undefined} onClick={() => goTo("taxes")}>P&amp;L &amp; Taxes</button>
+        </nav>
         {provider === "simulated" && <span className="badge muted-badge" title="Prices are simulated. Configure a real market data provider to see live prices.">simulated data</span>}
       </div>
 
@@ -68,8 +74,8 @@ export function Header() {
         )}
         <button className="btn kill" disabled={!positions.length} onClick={() => store.set({ kill: "all" })}
           title="Cancel all open orders and sell every position at market right now">⛔ Sell all now</button>
-        <button className="btn primary" onClick={() => void actions.addWidget()} title="Add a watchlist of stocks / ETFs">+ Widget</button>
-        <button className="btn" onClick={() => void actions.addOptionsWidget()} title="Add an option chain widget (calls, puts, Greeks)">+ Options</button>
+        {page === "trade" && <button className="btn primary" onClick={() => void actions.addWidget()} title="Add a watchlist of stocks / ETFs">+ Widget</button>}
+        {page === "trade" && <button className="btn" onClick={() => void actions.addOptionsWidget()} title="Add an option chain widget (calls, puts, Greeks)">+ Options</button>}
         <button className="btn" onClick={() => store.set({ settingsOpen: true })} title="Settings">⚙ Settings</button>
       </div>
     </header>

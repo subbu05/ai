@@ -13,12 +13,14 @@ import { lookup } from "./market/catalog.js";
 import type { MarketDataProvider } from "./market/provider.js";
 import { OptionsAwareProvider } from "./options/provider.js";
 import { SimulatedOptionModel, listExpirations, strikesAround } from "./options/chain.js";
-import { CONTRACT_MULTIPLIER, formatOcc, isOption } from "./options/occ.js";
+import { CONTRACT_MULTIPLIER, formatOcc, isOption, nyDate } from "./options/occ.js";
 import { BrokerManager } from "./brokers/manager.js";
 import { BROKERS } from "./brokers/index.js";
 import { PaperBroker } from "./brokers/paper.js";
 import { WidgetStore } from "./widgets.js";
 import { realizedBySymbol } from "./pnl.js";
+import { TaxBook } from "./tax/report.js";
+import { loadTaxRules, type TaxRules } from "./tax/rules.js";
 import { ProfitGuard } from "./protect.js";
 import { killSwitch } from "./killSwitch.js";
 import { HttpError, normalizeSymbol } from "./util.js";
@@ -53,7 +55,7 @@ interface Client {
   needsResync: boolean;
 }
 
-export async function buildApp(settings: AppSettings, opts: { provider?: MarketDataProvider; logger?: boolean; persistSettings?: boolean } = {}): Promise<AppContext> {
+export async function buildApp(settings: AppSettings, opts: { provider?: MarketDataProvider; logger?: boolean; persistSettings?: boolean; taxRules?: TaxRules } = {}): Promise<AppContext> {
   const storage = new Storage(dataDir(settings));
   const persist = (patch: Partial<AppSettings>) => { if (opts.persistSettings !== false) saveLocalSettings(patch); };
   const optionModel = new SimulatedOptionModel(settings.options?.riskFreeRate ?? 0.045);
@@ -406,6 +408,29 @@ export async function buildApp(settings: AppSettings, opts: { provider?: MarketD
     }
     saveCredentials(info.id, fields);
     return { credentials: credentialStatus() };
+  });
+
+  // ---------------------------------------------------------------- P&L & taxes
+  const taxBook = new TaxBook(storage, () => opts.taxRules ?? loadTaxRules());
+  app.get<{ Querystring: { year?: string } }>("/api/tax/report", async (req) => {
+    const y = req.query.year === undefined ? Number(nyDate(Date.now()).slice(0, 4)) : Number(req.query.year);
+    if (!Number.isInteger(y) || y < 2000 || y > 2100) throw new HttpError(400, "Invalid year");
+    const b = brokers.broker;
+    return taxBook.report({ year: y, broker: b.id, fills: await b.fills(1_000_000), quote: (s) => hub.get(s) });
+  });
+  app.put<{ Body: Record<string, unknown> }>("/api/tax/profile", async (req) => {
+    if (!req.body || typeof req.body !== "object") throw new HttpError(400, "Profile body required");
+    return taxBook.setProfile(req.body);
+  });
+  app.get("/api/dividends", async () => taxBook.dividends(brokers.broker.id));
+  app.post<{ Body: Record<string, unknown> }>("/api/dividends", async (req, reply) => {
+    if (!req.body || typeof req.body !== "object") throw new HttpError(400, "Dividend body required");
+    reply.code(201);
+    return taxBook.addDividend(brokers.broker.id, req.body);
+  });
+  app.delete<{ Params: { id: string } }>("/api/dividends/:id", async (req, reply) => {
+    if (!taxBook.deleteDividend(req.params.id)) throw new HttpError(404, "Dividend not found");
+    reply.code(204);
   });
 
   // ---------------------------------------------------------------- static web build

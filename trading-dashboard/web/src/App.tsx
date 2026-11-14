@@ -6,6 +6,8 @@ import { OrderTicket } from "./components/OrderTicket";
 import { SettingsModal } from "./components/SettingsModal";
 import { Toasts } from "./components/Toasts";
 import { KillSwitchDialog } from "./components/KillSwitchDialog";
+import { TaxPage } from "./components/TaxPage";
+import { usePage } from "./lib/route";
 
 export function App() {
   const ready = useApp((s) => s.ready);
@@ -13,6 +15,7 @@ export function App() {
   const hasTicket = useApp((s) => s.ticket !== null);
   const settingsOpen = useApp((s) => s.settingsOpen);
   const kill = useApp((s) => s.kill !== null);
+  const page = usePage();
 
   if (!ready) {
     return (
@@ -33,10 +36,14 @@ export function App() {
   return (
     <div className="app">
       <Header />
-      <main className="main">
-        <WidgetGrid />
-        <BottomPanel />
-      </main>
+      {page === "taxes" ? (
+        <main className="main"><TaxPage /></main>
+      ) : (
+        <main className="main">
+          <WidgetGrid />
+          <BottomPanel />
+        </main>
+      )}
       {hasTicket && <OrderTicket />}
       {settingsOpen && <SettingsModal />}
       {kill && <KillSwitchDialog />}

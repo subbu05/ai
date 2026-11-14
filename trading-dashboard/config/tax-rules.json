@@ -1,0 +1,42 @@
+{
+  "_note": "US federal figures used for the P&L & Taxes page estimates. Values are taxable-income thresholds (upper bound of each bracket). Check them against irs.gov each year and edit here; restart the server after editing. Years not listed use the closest listed year.",
+  "years": {
+    "2025": {
+      "standardDeduction": { "single": 15750, "mfj": 31500, "mfs": 15750, "hoh": 23625 },
+      "ordinary": {
+        "rates": [0.10, 0.12, 0.22, 0.24, 0.32, 0.35, 0.37],
+        "single": [11925, 48475, 103350, 197300, 250525, 626350],
+        "mfj": [23850, 96950, 206700, 394600, 501050, 751600],
+        "mfs": [11925, 48475, 103350, 197300, 250525, 375800],
+        "hoh": [17000, 64850, 103350, 197300, 250500, 626350]
+      },
+      "longTerm": {
+        "rates": [0, 0.15, 0.20],
+        "single": [48350, 533400],
+        "mfj": [96700, 600050],
+        "mfs": [48350, 300000],
+        "hoh": [64750, 566700]
+      }
+    },
+    "2026": {
+      "standardDeduction": { "single": 16100, "mfj": 32200, "mfs": 16100, "hoh": 24150 },
+      "ordinary": {
+        "rates": [0.10, 0.12, 0.22, 0.24, 0.32, 0.35, 0.37],
+        "single": [12400, 50400, 105700, 201775, 256225, 640600],
+        "mfj": [24800, 100800, 211400, 403550, 512450, 768700],
+        "mfs": [12400, 50400, 105700, 201775, 256225, 384350],
+        "hoh": [17700, 67450, 105700, 201750, 256200, 640600]
+      },
+      "longTerm": {
+        "rates": [0, 0.15, 0.20],
+        "single": [49450, 545500],
+        "mfj": [98900, 613700],
+        "mfs": [49450, 306850],
+        "hoh": [66200, 579600]
+      }
+    }
+  },
+  "niit": { "rate": 0.038, "threshold": { "single": 200000, "mfj": 250000, "mfs": 125000, "hoh": 200000 } },
+  "capitalLossLimit": { "single": 3000, "mfj": 3000, "mfs": 1500, "hoh": 3000 },
+  "washSaleDays": 30
+}

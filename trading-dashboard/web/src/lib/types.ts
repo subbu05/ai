@@ -76,3 +76,34 @@ export interface SymbolPnl {
   symbol: string; realizedPnl: number; boughtQty: number; soldQty: number;
   buyValue: number; sellValue: number; trades: number; wins: number; losses: number; lastTradeAt: number;
 }
+
+// ---------------------------------------------------------------- P&L & taxes
+export type FilingStatus = "single" | "mfj" | "mfs" | "hoh";
+export type Term = "short" | "long";
+export interface TaxProfile { filingStatus: FilingStatus; otherIncome: number; deduction: number | null; stateRatePct: number; lossCarryover: number }
+export interface ClosedLot {
+  symbol: string; qty: number; acquired: string; sold: string; acquiredTs: number; soldTs: number;
+  proceeds: number; cost: number; gain: number; term: Term; daysHeld: number; washDisallowed: number;
+}
+export interface OpenLotView {
+  symbol: string; qty: number; acquired: string; price: number; cost: number; multiplier: number; longTermOn: string;
+  mark: number | null; value: number | null; gain: number | null; term: Term; daysToLongTerm: number;
+}
+export interface TermTotals { proceeds: number; cost: number; gains: number; losses: number; washDisallowed: number; net: number; count: number }
+export interface Dividend { id: string; symbol: string; date: string; amount: number; qualified: boolean; note?: string }
+export interface Bracket { rate: number; from: number; to: number | null }
+export interface TaxEstimate {
+  rulesYear: number; rulesExact: boolean; deduction: number; netShortTerm: number; netLongTerm: number; netCapital: number;
+  lossDeducted: number; lossCarryforward: number; taxableIncome: number; federalTax: number; niit: number; stateTax: number;
+  taxOnInvestments: number; shortTermTax: number; longTermTax: number; investmentIncome: number; effectiveRatePct: number | null;
+  marginalOrdinaryPct: number; marginalLongTermPct: number; ordinaryBrackets: Bracket[]; longTermBrackets: Bracket[];
+  ordinaryTaxable: number; preferentialTaxable: number;
+}
+export interface TaxReport {
+  year: number; years: number[]; today: string; method: "FIFO"; profile: TaxProfile;
+  realized: { lots: ClosedLot[]; short: TermTotals; long: TermTotals };
+  unrealized: { lots: OpenLotView[]; short: number; long: number; total: number; becomingLongTerm30d: number };
+  dividends: { items: Dividend[]; qualified: number; ordinary: number; total: number };
+  bySymbol: { symbol: string; shortTerm: number; longTerm: number; dividends: number; unrealized: number; total: number }[];
+  estimate: TaxEstimate; ifSoldToday: TaxEstimate;
+}
