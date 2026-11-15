@@ -14,12 +14,13 @@ import type { SimulatedOptionModel } from "./chain.js";
  * With a real options data feed, replace this with a provider that streams contracts directly.
  */
 export class OptionsAwareProvider implements MarketDataProvider {
-  readonly name: string;
+  get name(): string {
+    return this.base.name;
+  }
   private byUnderlying = new Map<string, Map<string, OptionContract>>();
   private latest = new Map<string, Quote>();
 
   constructor(private base: MarketDataProvider, readonly model: SimulatedOptionModel) {
-    this.name = base.name;
   }
 
   start(onQuotes: (quotes: Quote[]) => void): void {

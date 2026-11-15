@@ -12,7 +12,7 @@ const DEFAULTS_FILE = join(CONFIG_DIR, "settings.json");
 const LOCAL_FILE = join(CONFIG_DIR, "settings.local.json");
 const CREDENTIALS_FILE = join(CONFIG_DIR, "credentials.local.json");
 
-export type BrokerId = "paper" | "robinhood" | "webull";
+export type BrokerId = "paper" | "alpaca-paper" | "alpaca-live" | "robinhood" | "webull";
 
 export interface AppSettings {
   host: string;
@@ -21,7 +21,7 @@ export interface AppSettings {
   broker: BrokerId;
   /** Must be true before any order is sent to a real-money broker. */
   liveTradingEnabled: boolean;
-  marketData: { provider: string; tickMs: number; volatility: number; flushMs: number };
+  marketData: { provider: string; tickMs: number; volatility: number; flushMs: number; alpacaFeed?: string };
   paper: { startingCash: number };
   /** Sell a position that was in profit today once it falls dropPct% from today's high (never below cost). */
   profitGuard: { enabled: boolean; dropPct: number; floorPct: number; disabledSymbols: string[] };
@@ -35,7 +35,7 @@ const BUILTIN: AppSettings = {
   dataDir: "data",
   broker: "paper",
   liveTradingEnabled: false,
-  marketData: { provider: "simulated", tickMs: 250, volatility: 0.0006, flushMs: 100 },
+  marketData: { provider: "auto", tickMs: 250, volatility: 0.0006, flushMs: 100 },
   paper: { startingCash: 100_000 },
   profitGuard: { enabled: true, dropPct: 5, floorPct: 0.25, disabledSymbols: [] },
   options: { riskFreeRate: 0.045 },

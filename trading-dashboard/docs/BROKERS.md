@@ -40,7 +40,9 @@ Then set `implemented: true` for it in `server/src/brokers/index.ts`.
 - **Robinhood**: Robinhood doesn't publish an official API for stock trading. Community
   clients use the private endpoints the app uses, which can break or get your account
   flagged. Check Robinhood's terms before automating it.
-- **Others with solid official APIs**: Alpaca, Interactive Brokers (Client Portal / TWS),
+- **Alpaca**: implemented in `server/src/brokers/alpaca.ts` (paper + live) with real prices from
+  `server/src/market/alpaca.ts`. A good reference for writing the others.
+- **Others with solid official APIs**: Interactive Brokers (Client Portal / TWS),
   Schwab, Tradier. To add one, copy a scaffold class, add an id to `BrokerId` in
   `server/src/config.ts`, and register it in `BROKERS` and `createBroker()`.
 

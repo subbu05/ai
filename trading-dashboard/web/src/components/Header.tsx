@@ -30,7 +30,9 @@ export function Header() {
   }, [positions, v]);
 
   const equity = (account?.cash ?? 0) + t.mv;
-  const totalPnl = account ? equity - account.startingCash : 0;
+  // Brokers without a fixed starting balance (e.g. Alpaca) report 0: show realized + unrealized instead.
+  const base = account?.startingCash ?? 0;
+  const totalPnl = !account ? 0 : base > 0 ? equity - base : account.realizedPnl + t.unrealized;
 
   return (
     <header className="header">
@@ -52,7 +54,7 @@ export function Header() {
           sub={t.cost ? fmtPct((t.unrealized / t.cost) * 100) : undefined} />
         <Stat label="Realized" value={fmtSignedUsd(account?.realizedPnl)} tone={tone(account?.realizedPnl)} />
         <Stat label="Total P&L" value={fmtSignedUsd(totalPnl)} tone={tone(totalPnl)}
-          sub={account ? fmtPct((totalPnl / account.startingCash) * 100) : undefined} />
+          sub={base > 0 ? fmtPct((totalPnl / base) * 100) : undefined} />
         <Stat label="Cash" value={fmtUsd(account?.cash)} />
         <Stat label="Buying power" value={fmtUsd(account?.buyingPower)} />
       </div>

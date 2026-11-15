@@ -5,7 +5,7 @@
   "broker": "paper",
   "liveTradingEnabled": false,
   "marketData": {
-    "provider": "simulated",
+    "provider": "auto",
     "tickMs": 250,
     "volatility": 0.0006,
     "flushMs": 100

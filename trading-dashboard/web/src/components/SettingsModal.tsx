@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
-import { store, actions, toast } from "../lib/store";
+import { store, actions, toast, useApp } from "../lib/store";
 import type { BrokerInfo, GuardEvent, PublicSettings } from "../lib/types";
 import { fmtDateTime } from "../lib/format";
 
 type SettingsData = Awaited<ReturnType<typeof api.settings>>;
 
 export function SettingsModal() {
+  const provider = useApp((st) => st.provider);
   const [data, setData] = useState<SettingsData | null>(null);
   const [selected, setSelected] = useState<string>("");
   const close = () => store.set({ settingsOpen: false });
@@ -55,11 +56,19 @@ export function SettingsModal() {
                 <b>{b.name}</b>
                 <span className="small muted">
                   {b.id === data.active ? "● active" : b.implemented ? "available" : "adapter scaffold"}
-                  {b.live ? " · real money" : " · simulated"}
+                  {b.live ? " · real money" : b.id === "paper" ? " · simulated" : " · practice money"}
                 </span>
               </button>
             ))}
           </div>
+
+          {info.id.startsWith("alpaca") && (
+            <p className="note">
+              Get keys at app.alpaca.markets → {info.id === "alpaca-live" ? "your live account" : "switch to the Paper account"} → API Keys.
+              {info.id === "alpaca-live" ? " Live keys trade real money: orders also need the Safety switch below." : " Paper keys trade Alpaca's practice money with real prices."}{" "}
+              Saving keys switches the dashboard to real Alpaca prices (free IEX feed). Option prices stay theoretical, so options are never auto-sold on Alpaca.
+            </p>
+          )}
 
           {info.fields.length > 0 && <CredentialsForm info={info} setFields={data.credentials[info.id] ?? []} onSaved={load} />}
 
@@ -91,7 +100,8 @@ export function SettingsModal() {
         <section>
           <h3>Market data</h3>
           <p className="small muted">
-            Provider: <b>{data.settings.marketData.provider}</b> · tick {data.settings.marketData.tickMs} ms · UI batch {data.settings.marketData.flushMs} ms.
+            Using: <b>{provider === "alpaca" ? "Alpaca (real prices)" : "simulated prices"}</b> · setting <b>{data.settings.marketData.provider}</b>
+            {data.settings.marketData.provider === "auto" ? " (Alpaca when Alpaca keys are saved)" : ""} · tick {data.settings.marketData.tickMs} ms · UI batch {data.settings.marketData.flushMs} ms.
             Change it in <code>config/settings.local.json</code>.
           </p>
         </section>

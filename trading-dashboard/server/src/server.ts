@@ -5,10 +5,12 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { WebSocket } from "ws";
 
-import { ROOT, dataDir, saveLocalSettings, saveCredentials, credentialStatus, type AppSettings, type BrokerId } from "./config.js";
+import { ROOT, dataDir, loadCredentials, saveLocalSettings, saveCredentials, credentialStatus, type AppSettings, type BrokerId } from "./config.js";
 import { Storage } from "./storage.js";
 import { QuoteHub } from "./market/quoteHub.js";
-import { createMarketData } from "./market/index.js";
+import { createMarketData, alpacaDataKeys } from "./market/index.js";
+import { SwitchableProvider } from "./market/switchable.js";
+import { verifyAlpacaKeys } from "./brokers/alpaca.js";
 import { lookup } from "./market/catalog.js";
 import type { MarketDataProvider } from "./market/provider.js";
 import { OptionsAwareProvider } from "./options/provider.js";
@@ -59,7 +61,14 @@ export async function buildApp(settings: AppSettings, opts: { provider?: MarketD
   const storage = new Storage(dataDir(settings));
   const persist = (patch: Partial<AppSettings>) => { if (opts.persistSettings !== false) saveLocalSettings(patch); };
   const optionModel = new SimulatedOptionModel(settings.options?.riskFreeRate ?? 0.045);
-  const provider = new OptionsAwareProvider(opts.provider ?? createMarketData(settings), optionModel);
+  // The data source can change at runtime (e.g. real Alpaca prices once Alpaca keys are saved).
+  const source = new SwitchableProvider(opts.provider ?? createMarketData(settings, loadCredentials()));
+  let sourceKey = opts.provider ? "fixed" : dataSourceKey();
+  function dataSourceKey(): string {
+    const keys = settings.marketData.provider === "simulated" ? null : alpacaDataKeys(settings, loadCredentials());
+    return keys ? `alpaca:${keys.keyId}` : "simulated";
+  }
+  const provider = new OptionsAwareProvider(source, optionModel);
   const hub = new QuoteHub(provider, settings.marketData.flushMs);
   const widgets = new WidgetStore(storage);
   const brokers = new BrokerManager({ storage, hub, startingCash: settings.paper.startingCash });
@@ -117,7 +126,23 @@ export async function buildApp(settings: AppSettings, opts: { provider?: MarketD
     for (const c of clients) if (c.socket.readyState === 1) c.socket.send(msg);
   };
 
-  const guard = new ProfitGuard(storage, hub, () => settings.profitGuard, (b) => !b.live || settings.liveTradingEnabled);
+  const guard = new ProfitGuard(storage, hub, () => settings.profitGuard, (b, symbol) => {
+    if (b.live && !settings.liveTradingEnabled) return "live trading is disabled";
+    // Never auto-sell a real brokerage account on prices we made up.
+    if (b.id !== "paper" && hub.providerName === "simulated") return "prices are simulated (add Alpaca keys for real prices)";
+    if (b.id !== "paper" && isOption(symbol)) return "option prices here are theoretical, so options aren't auto-sold on a real account";
+    return null;
+  });
+
+  /** Re-pick the data source after keys or the broker change; tells the browser if it switched. */
+  const refreshDataSource = () => {
+    if (opts.provider) return;
+    const key = dataSourceKey();
+    if (key === sourceKey) return;
+    sourceKey = key;
+    source.swap(createMarketData(settings, loadCredentials()));
+    broadcast(JSON.stringify({ t: "provider", d: hub.providerName }));
+  };
   guard.onEvent((e) => {
     if (e.action !== "sell") app.log.warn(e.message);
     broadcast(JSON.stringify({ t: "guard", d: e }));
@@ -388,6 +413,7 @@ export async function buildApp(settings: AppSettings, opts: { provider?: MarketD
       await brokers.use(body.broker); // throws (and keeps the old broker) if it can't connect
       settings.broker = body.broker;
       persist({ broker: body.broker });
+      refreshDataSource();
     }
     if (body.liveTradingEnabled !== undefined) {
       settings.liveTradingEnabled = !!body.liveTradingEnabled;
@@ -406,7 +432,13 @@ export async function buildApp(settings: AppSettings, opts: { provider?: MarketD
       if (typeof v !== "string" || v.length > 4096) throw new HttpError(400, `Invalid value for ${k}`);
       fields[k] = v.trim();
     }
+    // Alpaca keys are checked with Alpaca before they're stored, so typos fail here, not later.
+    if (info.id === "alpaca-paper" || info.id === "alpaca-live") {
+      const merged = { ...(loadCredentials()[info.id] ?? {}), ...fields };
+      if (merged.keyId && merged.secretKey) await verifyAlpacaKeys(info.id === "alpaca-live" ? "live" : "paper", merged);
+    }
     saveCredentials(info.id, fields);
+    refreshDataSource();
     return { credentials: credentialStatus() };
   });
 

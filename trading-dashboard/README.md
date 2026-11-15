@@ -40,10 +40,11 @@ is stored as plain files on your machine.
   the profit-protection trigger price per position, open/closed orders with cancel, the full
   fill history, win rate, and a cumulative realized P&L chart.
 - **Brokers**: a full **paper broker** (simulated fills against live quotes) works out of the
-  box. **Robinhood** and **Webull** adapters are scaffolded: credentials and settings UI are
+  box. **Alpaca** is fully supported, both **paper** (practice money, real prices) and **live**.
+  **Robinhood** and **Webull** adapters are scaffolded: credentials and settings UI are
   done, and the API calls are left to implement. See [docs/BROKERS.md](docs/BROKERS.md).
 
-> Prices are **simulated** until you plug in a real market data provider. This is not
+> Prices are **simulated** until you add Alpaca keys (then they're real Alpaca prices). This is not
 > investment advice. Use paper trading until you trust every line that touches a real account.
 > The kill switch and profit protection use **market orders**: they get you out fast, but no
 > market order can guarantee a price. A sudden gap can fill below the trigger.
@@ -83,6 +84,29 @@ Other commands: `npm test` (server tests), `npm run typecheck`.
 JSON files are written atomically (temp file + rename) and coalesced, so a crash can't
 corrupt them and bursts of activity cost one disk write. Set `TD_HOME` to keep `config/` and
 `data/` somewhere else.
+
+## Alpaca
+
+1. Create a free account at alpaca.markets. In the dashboard there, switch to the **Paper**
+   account and generate API keys (live accounts have their own, separate keys).
+2. In the trading dashboard: **⚙ Settings → Alpaca (paper)**, paste the key ID and secret,
+   **Save credentials** (they're checked with Alpaca before they're stored), then
+   **Use Alpaca (paper)**.
+3. Prices switch to real Alpaca data (free IEX feed; set `"marketData": {"alpacaFeed": "sip"}`
+   in `config/settings.local.json` if you pay for the full feed). Your Alpaca balance,
+   positions, orders and fills appear everywhere, including the P&L & Taxes page.
+4. For real money, use **Alpaca (live)** with your live keys and turn on **Settings → Safety →
+   Allow orders on real-money brokers**. Try it on paper first.
+
+How it behaves:
+- Orders go straight to Alpaca; working orders are polled every 2 s, balances every 10 s, so
+  trades you make in Alpaca's own app show up too.
+- Long-only: a sell larger than what you hold is refused (it would open a short).
+- Options trade in whole contracts with day orders. The option chain's prices and Greeks are
+  still **theoretical** (Black-Scholes on the real stock price), not Alpaca's option quotes,
+  so check the price before you send a limit order, and options are never auto-sold on Alpaca.
+- The kill switch never auto-sells an Alpaca account on simulated prices.
+- Alpaca has no fixed starting balance, so the header's Total P&L is realized + unrealized.
 
 ## Options
 

@@ -64,6 +64,10 @@ export function connect(): void {
       case "kill":
         void actions.refreshTrading();
         break;
+      case "provider":
+        store.set({ provider: msg.d });
+        toast(msg.d === "alpaca" ? "Now using real Alpaca prices" : "Now using simulated prices", "info");
+        break;
       case "broker":
         void actions.bootstrap();
         break;

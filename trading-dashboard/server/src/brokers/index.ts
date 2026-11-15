@@ -3,6 +3,7 @@ import type { QuoteHub } from "../market/quoteHub.js";
 import type { Storage } from "../storage.js";
 import type { Broker } from "./broker.js";
 import { PaperBroker } from "./paper.js";
+import { AlpacaBroker, ALPACA_FIELDS } from "./alpaca.js";
 import { RobinhoodBroker, WebullBroker, ROBINHOOD_FIELDS, WEBULL_FIELDS, type CredentialField } from "./live.js";
 
 export interface BrokerInfo {
@@ -15,6 +16,8 @@ export interface BrokerInfo {
 
 export const BROKERS: BrokerInfo[] = [
   { id: "paper", name: "Paper (simulated)", live: false, implemented: true, fields: [] },
+  { id: "alpaca-paper", name: "Alpaca (paper)", live: false, implemented: true, fields: ALPACA_FIELDS },
+  { id: "alpaca-live", name: "Alpaca (live)", live: true, implemented: true, fields: ALPACA_FIELDS },
   { id: "robinhood", name: "Robinhood", live: true, implemented: false, fields: ROBINHOOD_FIELDS },
   { id: "webull", name: "Webull", live: true, implemented: false, fields: WEBULL_FIELDS },
 ];
@@ -30,6 +33,10 @@ export function createBroker(id: BrokerId, deps: BrokerDeps): Broker {
   switch (id) {
     case "paper":
       return new PaperBroker(deps.storage, deps.hub, deps.startingCash);
+    case "alpaca-paper":
+      return new AlpacaBroker("paper", deps.credentials["alpaca-paper"] ?? {});
+    case "alpaca-live":
+      return new AlpacaBroker("live", deps.credentials["alpaca-live"] ?? {});
     case "robinhood":
       return new RobinhoodBroker(deps.credentials.robinhood ?? {});
     case "webull":

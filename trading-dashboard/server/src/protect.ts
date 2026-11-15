@@ -81,7 +81,8 @@ export class ProfitGuard {
     storage: Storage,
     hub: QuoteHub,
     private settings: () => ProfitGuardSettings,
-    private canTrade: (b: Broker) => boolean,
+    /** null if the guard may sell `symbol` on broker `b`, else the reason it may not. */
+    private canTrade: (b: Broker, symbol: string) => string | null,
   ) {
     this.state = storage.json<Record<string, SymbolState>>("profit-guard.json", {});
     this.log = storage.log<GuardEvent>("profit-guard.log.jsonl");
@@ -156,8 +157,9 @@ export class ProfitGuard {
     const b = this.broker;
     const base = { ts: Date.now(), symbol: pos.symbol, peak, avgCost: pos.avgCost, triggerPrice, price: q.bid };
     if (!b) return;
-    if (!this.canTrade(b)) {
-      this.emit({ ...base, action: "skipped", message: `${pos.symbol} hit its protect price ${triggerPrice}, but live trading is disabled. Not sold.` });
+    const blocked = this.canTrade(b, pos.symbol);
+    if (blocked) {
+      this.emit({ ...base, action: "skipped", message: `${pos.symbol} hit its protect price ${triggerPrice}, but ${blocked}. Not sold.` });
       return;
     }
     try {
